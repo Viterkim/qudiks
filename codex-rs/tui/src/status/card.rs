@@ -7,7 +7,8 @@ use crate::legacy_core::config::Config;
 use crate::line_truncation::line_width;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::CODEX_DISPLAY_NAME;
+use crate::version::CODEX_DISPLAY_VERSION;
 use crate::width::display_width;
 use chrono::DateTime;
 use chrono::Local;
@@ -731,9 +732,9 @@ impl HistoryCell for StatusHistoryCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(CODEX_DISPLAY_NAME).bold(),
             Span::from(" ").dim(),
-            Span::from(format!("(v{CODEX_CLI_VERSION})")).dim(),
+            Span::from(format!("(v{CODEX_DISPLAY_VERSION})")).dim(),
         ]));
 
         let available_inner_width = usize::from(width.saturating_sub(4));

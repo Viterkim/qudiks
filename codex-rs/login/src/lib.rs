@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod auth_env_telemetry;
+pub mod github_copilot;
 pub mod test_support;
 pub mod token_data;
 

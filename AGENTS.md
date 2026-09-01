@@ -2,6 +2,21 @@
 
 In the codex-rs folder where the rust code lives:
 
+## Quick-fork workflow (overrides upstream test guidance below)
+
+This repository is a fast-moving personal fork. Optimize for quick, focused changes rather than
+upstream-level validation.
+
+- Do not run workspace-wide or crate-wide test suites by default.
+- Do not run `just test`, broad `just test -p ...` invocations, Clippy/fix, Bazel checks, snapshot
+  suites, or unrelated upstream tests unless the user explicitly asks for them.
+- Do not add or update tests solely because upstream contribution guidance says they are required.
+- A narrowly targeted existing test may be run only when it directly exercises the changed behavior,
+  is expected to finish quickly, and cannot open a browser, start an OAuth flow, contact external
+  services, or otherwise interrupt the user. Otherwise skip tests and say so.
+- Prefer cheap static checks such as `git diff --check` when validation is useful.
+- Never treat passing unrelated tests as evidence that a change is correct.
+
 - Crate names are prefixed with `codex-`. For example, the `core` folder's crate is named `codex-core`
 - When using format! and you can inline variables into {}, always do that.
 - Install any commands the repo relies on (for example `just`, `rg`, or `cargo-insta`) if they aren't already available before running instructions here.
@@ -61,13 +76,8 @@ In the codex-rs folder where the rust code lives:
     trivial; prefer new modules/files and keep `chatwidget.rs` focused on orchestration.
 - When running Rust commands (e.g. `just fix` or `just test`) be patient with the command and never try to kill them using the PID. Rust lock can make the execution slow, this is expected.
 
-Run `just fmt` (in the `codex-rs` directory) automatically after you have finished making code changes anywhere in this repository; do not ask for approval to run it. Additionally, run the tests:
-
-1. Do not run `cargo test` directly. Use `just test` so test execution follows the repo defaults.
-2. Run the test for the specific project that was changed. For example, if changes were made in `codex-rs/tui`, run `just test -p codex-tui`.
-3. Once those pass, if any changes were made in common, core, or protocol, run the complete test suite with `just test`. Avoid `--all-features` for routine local runs because it expands the build matrix and can significantly increase `target/` disk usage; use it only when you specifically need full feature coverage. project-specific or individual tests can be run without asking the user, but do ask the user before running the complete test suite.
-
-Before finalizing a large change to `codex-rs`, run `just fix -p <project>` (in `codex-rs` directory) to fix any linter issues in the code. Prefer scoping with `-p` to avoid slow workspace‑wide Clippy builds; only run `just fix` without `-p` if you changed shared crates. Do not re-run tests after running `fix` or `fmt`.
+Run `just fmt` (in the `codex-rs` directory) automatically after making Rust code changes. Follow
+the quick-fork workflow above for tests and linting; do not run them automatically.
 
 ## The `codex-core` crate
 
@@ -113,7 +123,8 @@ Search for breaking changes in external integration surfaces:
 
 For agent changes prefer integration tests over unit tests. Integration tests are under `core/suite` and use `test_codex` to set up a test instance of codex.
 
-Features that change the agent logic MUST add an integration test:
+For upstream-bound work, features that change the agent logic should add an integration test. This
+personal fork does not require one unless the user requests upstream-ready coverage:
 
 - Provide a list of major logic changes and user-facing behaviors that need to be tested.
 
@@ -181,10 +192,8 @@ See `codex-rs/tui/styles.md`.
 
 This repo uses snapshot tests (via `insta`), especially in `codex-rs/tui`, to validate rendered output.
 
-**Requirement:** any change that affects user-visible UI (including adding new UI) must include
-corresponding `insta` snapshot coverage (add a new snapshot test if one doesn't exist yet, or
-update the existing snapshot). Review and accept snapshot updates as part of the PR so UI impact
-is easy to review and future diffs stay visual.
+For upstream-bound work, user-visible UI changes should include corresponding `insta` snapshot
+coverage. In this personal fork, do not run or update snapshot tests unless the user explicitly asks.
 
 When UI or text output changes intentionally, update the snapshots as follows:
 

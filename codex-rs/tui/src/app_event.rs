@@ -562,6 +562,11 @@ pub(crate) enum AppEvent {
     /// Open the default token-activity view selected from the `/usage` menu.
     OpenTokenActivity,
 
+    /// Copilot `/usage` finished fetching remaining AI credits.
+    CopilotUsageLoaded {
+        result: Result<String, String>,
+    },
+
     /// Open the reset-credit flow selected from the `/usage` menu.
     OpenRateLimitResetCredits,
 

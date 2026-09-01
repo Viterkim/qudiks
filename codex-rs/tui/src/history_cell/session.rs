@@ -142,7 +142,7 @@ pub(crate) fn new_session_info(
         session.reasoning_effort.clone(),
         show_fast_status,
         config.cwd.to_path_buf(),
-        CODEX_CLI_VERSION,
+        CODEX_DISPLAY_VERSION,
     )
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
@@ -322,10 +322,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box: ">_ Åben KI Qudiks (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from(CODEX_DISPLAY_NAME).bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];
@@ -396,7 +396,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
-            Line::from(format!("OpenAI Codex (v{})", self.version)),
+            Line::from(format!("{CODEX_DISPLAY_NAME} (v{})", self.version)),
             Line::from(format!(
                 "model: {}{}",
                 self.model,

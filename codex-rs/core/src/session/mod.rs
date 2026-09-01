@@ -3258,6 +3258,9 @@ impl Session {
             image_resize_notice_mode,
         );
         prepare_audio_response_items(&mut items);
+        // Estimator sizes reasoning from encrypted_content, so keeping it in history
+        // bills tokens we never send and compacts far too early.
+        turn_context.provider.prepare_request_items(&mut items);
         // Most response items get their passthrough turn ID at the durable history boundary.
         for item in &mut items {
             Self::stamp_response_item_for_history(item, &turn_context.sub_id);

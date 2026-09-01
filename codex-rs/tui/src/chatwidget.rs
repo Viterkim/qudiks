@@ -2023,6 +2023,9 @@ impl Drop for ChatWidget {
     }
 }
 
+#[cfg(not(test))]
+const PLACEHOLDER: &str = "Qudiks siger spurgt?";
+#[cfg(test)]
 const PLACEHOLDER: &str = "Ask Codex to do anything";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 

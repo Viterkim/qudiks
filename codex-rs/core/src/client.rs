@@ -934,6 +934,8 @@ impl ModelClient {
         responses_metadata: &CodexResponsesMetadata,
     ) -> Result<ResponsesApiRequest> {
         let mut input = prompt.get_formatted_input_for_request(model_info.use_responses_lite);
+        let mut prompt_tools = prompt.tools.to_vec();
+        self.state.provider.prepare_request_tools(&mut prompt_tools);
         let is_openai = self.state.provider.info().is_openai();
         let (instructions, tools) = if model_info.use_responses_lite {
             // These prompt-only items are rebuilt on every request. Hash their visible payloads
@@ -943,9 +945,9 @@ impl ModelClient {
                 self.state.thread_id.to_string().as_bytes(),
             );
             let tools = if self.state.provider.capabilities().namespace_tools {
-                create_tools_json_for_responses_lite(&prompt.tools)?
+                create_tools_json_for_responses_lite(&prompt_tools)?
             } else {
-                create_tools_json_for_responses_api(&prompt.tools)?
+                create_tools_json_for_responses_api(&prompt_tools)?
             };
             let mut prefix = vec![ResponseItem::AdditionalTools {
                 id: Some(ResponseItemId::with_suffix(
@@ -970,7 +972,7 @@ impl ModelClient {
         } else {
             (
                 prompt.base_instructions.text.clone(),
-                Some(create_tools_raw_json_for_responses_api(&prompt.tools)?.into()),
+                Some(create_tools_raw_json_for_responses_api(&prompt_tools)?.into()),
             )
         };
         if !is_openai {
@@ -1016,7 +1018,11 @@ impl ModelClient {
             instructions,
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: if prompt_tools.is_empty() {
+                String::new()
+            } else {
+                "auto".to_string()
+            },
             parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
             reasoning: Some(reasoning),
             store: false,
@@ -1635,6 +1641,16 @@ impl ModelClientSession {
             );
             self.client
                 .prepare_response_items_for_request(&mut request.input);
+            self.client
+                .state
+                .provider
+                .prepare_request_items(&mut request.input);
+            options.extra_headers.extend(
+                self.client
+                    .state
+                    .provider
+                    .responses_headers(&request.input, &self.client.state.session_source),
+            );
             let request_session_telemetry =
                 session_telemetry_for_request(session_telemetry, &request);
             let inference_trace_attempt = inference_trace.start_attempt();

@@ -1,0 +1,112 @@
+qudiks - a lazy little fork of openai/codex
+
+Adds GitHub Copilot as a native provider. Installed binary is `qudiks`, Copilot
+is its default (~/.qudiks/config.toml, no -p needed). Everything else upstream's.
+
+SETUP
+  ./setup-qudiks.sh     first time. builds, installs, logs in, writes a wrapper,
+                        asks for trusted roots, yolo on by default
+  ./install-qudiks.sh   update. resets to remote (survives force-pushed
+                        rebases), rebuilds, reinstalls, refreshes catalog
+  ./login-qudiks.sh     re-auth if github/copilot creds go bad
+
+  qudiks                                        start a session
+  qudiks login github-copilot models            what your account can use
+  qudiks login github-copilot --model X setup   switch model
+  qudiks login github-copilot status|logout
+
+RULES
+  Keep the fork tiny. New code in new files. Upstream files get a mod line, a
+  pub use, or one dispatch arm. ~17 upstream files today. Watch that number.
+
+  Build with cargo, --locked always. Without it cargo resolves rama-error past
+  rama-core 0.3.0-alpha.4 and fails with "no OpaqueError in the root":
+    cd codex-rs && cargo build --release --locked -p codex-cli --bin codex
+    install -m 755 codex-rs/target/release/codex ~/.cargo/bin/qudiks
+
+  The cargo bin stays named "codex" - 51 upstream tests across 30 files call
+  cargo_bin("codex"), and those files churn ~243 commits/6mo. We install it AS
+  qudiks. Don't `cargo install` either, it would shadow a real codex on PATH.
+
+  Ignore bazel. BUILD.bazel/MODULE.bazel are upstream CI, cargo never reads
+  them, deleting them means endless conflicts on 198 files.
+
+  Rebase: keep ours for files we own, take THEIRS + re-apply our hook for
+  upstream files. -X ours/theirs are inverted during a rebase, resolve by hand.
+
+  Tests: BROWSER=true just test -p codex-cli   (cli/tests/cloud_config.rs runs a
+  real OAuth flow and hijacks your browser otherwise). just fmt, just fix -p X.
+
+  No unrequested docs. No tests that only restate the implementation.
+
+COPILOT GOTCHAS (measured against the live API, don't re-derive)
+  Codex ONLY speaks the Responses API. Of a 48-model catalog only ~12 serve
+  /responses; every claude-* is /v1/messages and unusable. Model picking filters
+  on advertised endpoints; entries declaring none (embeddings, old models) are
+  excluded when the rest of the catalog does declare them.
+
+  Four things Copilot 400s/422s on, all fixed in code:
+    reasoning.encrypted_content    "Could not decode the compaction blob"
+    web_search.external_web_access + indexed_web_access  "Argument not
+        supported" - the tool itself is fine
+      both stripped in model-provider/src/github_copilot.rs
+    tool_choice with no tools      "A tool_choice was set on the request but no
+        tools were specified". Compaction sends zero tools, so every session
+        died the moment it needed to compact. Now omitted when tools are empty
+        (core/src/client.rs + codex-api/src/common.rs).
+    grok 422s on namespaced tools (the whole type, not a field) - setup writes
+        `[features] multi_agent = false`, clears it for non-grok. The
+        deprecated alias is `features.collab`.
+
+  Strip encrypted_content from history too, not just the wire (session/mod.rs
+  prepare_conversation_items_for_history). The token estimator sizes reasoning
+  from encrypted_content.len(), so leaving it bills the context budget for
+  bytes we never send - one session carried 1.3MB of blob (~329k phantom
+  tokens) against 20k of real summary and compacted at 190k of a 311k window.
+
+  Copilot answers 400, NOT 401, for a bad token, so codex's forced-refresh-on-
+  401 never fires. Provider auth needs a non-zero refresh_interval_ms (1h
+  against a 24h token). Don't set it back to 0.
+
+  Codex's /models refresh wants {"models":[]}, Copilot returns {"data":[]}.
+  Setup translates the catalog to ~/.qudiks/copilot-models.json and points
+  model_catalog_json at it, which also switches codex to a static models
+  manager so it stops calling the endpoint. Without it every turn warns about
+  fallback metadata and token budgets are guesses.
+
+  Context window: max_context_window_tokens (grok 328k). max_prompt_tokens
+  (200k) is not enforced, a ~210k prompt is accepted. Don't churn it. Do NOT
+  set effective_context_window_percent - upstream defaults to 95 and its own
+  models omit it; hardcoding 85 silently cost ~49k of grok's window.
+
+  The 628K tier in Copilot's picker is not in the API: one entry, one window,
+  same under vscode-chat and copilot-chat, and grok-4.6-628k style ids 400.
+  Assumed to be the cheap tier; confirming costs credits.
+
+  Responses carry copilot_usage.total_nano_aiu and the per-token rates, so real
+  spend is measurable. grok-4.6 AIU per 1M tokens: 200 in, 50 cache read, 600
+  out (1 AIU = 1e9 nano_aiu). Rollouts under ~/.qudiks/sessions log
+  last_token_usage per request, enough to price any past session.
+
+  Hooks run on the HTTP Responses path (client.rs stream_responses_api), which
+  local compaction uses too. The websocket path has none, but
+  supports_websockets is false for us and remote compaction is openai-only.
+  Hook them if either turns on.
+
+  Provider name "GitHub Copilot" is load-bearing, the header adapter matches on
+  it. Shared as codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME.
+
+  Config home: QUDIKS_HOME > CODEX_HOME > ~/.qudiks
+
+HOW TO DEBUG THE NEXT ONE
+  Point config base_url at a local mock http server, run a turn, dump the body,
+  replay it with curl against the real endpoint using `qudiks login
+  github-copilot token`, then drop one field or tool until it stops failing.
+  Found every bug above in minutes. The old Node bridge is in
+  `git log -- tools/qudiks-copilot` if you want a protocol reference.
+
+TODO
+  [ ] llama.cpp profile. Should need no rust, just local.config.toml with
+      wire_api = "responses". Needs --jinja + a tool-capable model. Untested.
+  [ ] Three-way switching: default copilot, -p local, -p personal (openai).
+      openai side needs `qudiks login` into ~/.qudiks first. Untested.

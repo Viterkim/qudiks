@@ -10,13 +10,20 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
+use codex_cli::GithubCopilotLoginArgs;
 use codex_cli::read_access_token_from_stdin;
 use codex_cli::read_api_key_from_stdin;
+use codex_cli::run_github_copilot_logout;
+use codex_cli::run_github_copilot_models;
+use codex_cli::run_github_copilot_setup;
+use codex_cli::run_github_copilot_status;
+use codex_cli::run_github_copilot_token;
 use codex_cli::run_login_status;
 use codex_cli::run_login_with_access_token;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
 use codex_cli::run_login_with_device_code;
+use codex_cli::run_login_with_github_copilot;
 use codex_cli::run_logout;
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_cloud_tasks::Cli as CloudTasksCli;
@@ -539,6 +546,74 @@ struct LoginCommand {
 enum LoginSubcommand {
     /// Show login status.
     Status,
+
+    /// Sign in to GitHub Copilot with the GitHub device flow.
+    #[clap(name = "github-copilot")]
+    GithubCopilot(GithubCopilotLoginCommand),
+}
+
+#[derive(Debug, Parser)]
+struct GithubCopilotLoginCommand {
+    /// GitHub domain to authenticate against (for GitHub Enterprise).
+    #[arg(long = "domain", value_name = "DOMAIN", default_value = codex_login::github_copilot::DEFAULT_GITHUB_DOMAIN)]
+    domain: String,
+
+    /// Write a profile instead of the base config; select it with `-p <name>`.
+    #[arg(long = "profile", value_name = "NAME")]
+    profile: Option<ProfileV2Name>,
+
+    /// Model to use instead of the best one the account offers.
+    #[arg(long = "model", short = 'm', value_name = "MODEL")]
+    model: Option<String>,
+
+    /// Override the Copilot editor OAuth client id (advanced).
+    #[arg(long = "client-id", value_name = "CLIENT_ID", hide = true)]
+    client_id: Option<String>,
+
+    #[command(subcommand)]
+    action: Option<GithubCopilotSubcommand>,
+}
+
+impl GithubCopilotLoginCommand {
+    fn login_args(self) -> GithubCopilotLoginArgs {
+        GithubCopilotLoginArgs {
+            domain: self.domain,
+            client_id: self.client_id,
+            profile: self.profile,
+            model: self.model,
+        }
+    }
+}
+
+/// Options accepted after `setup`, so both flag orderings work.
+#[derive(Debug, Parser)]
+struct GithubCopilotSetupCommand {
+    /// Profile to write; overrides the value given before the subcommand.
+    #[arg(long = "profile", value_name = "NAME")]
+    profile: Option<ProfileV2Name>,
+
+    /// Model to use instead of the best one the account offers.
+    #[arg(long = "model", short = 'm', value_name = "MODEL")]
+    model: Option<String>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum GithubCopilotSubcommand {
+    /// Rewrite the Copilot profile from stored credentials.
+    Setup(GithubCopilotSetupCommand),
+
+    /// List the models this account can use.
+    Models,
+
+    /// Show stored GitHub Copilot credential status.
+    Status,
+
+    /// Remove stored GitHub Copilot credentials.
+    Logout,
+
+    /// Print a short-lived Copilot bearer token; used by provider auth.
+    #[clap(hide = true)]
+    Token,
 }
 
 #[derive(Debug, Parser)]
@@ -1533,6 +1608,43 @@ async fn cli_main(
                 Some(LoginSubcommand::Status) => {
                     run_login_status(login_cli.config_overrides).await;
                 }
+                Some(LoginSubcommand::GithubCopilot(copilot_cli)) => match copilot_cli.action {
+                    Some(GithubCopilotSubcommand::Setup(ref setup_cli)) => {
+                        let profile = setup_cli.profile.clone();
+                        let model = setup_cli.model.clone();
+                        let mut args = copilot_cli.login_args();
+                        if profile.is_some() {
+                            args.profile = profile;
+                        }
+                        if model.is_some() {
+                            args.model = model;
+                        }
+                        run_github_copilot_setup(login_cli.config_overrides, args).await;
+                    }
+                    Some(GithubCopilotSubcommand::Models) => {
+                        run_github_copilot_models(login_cli.config_overrides).await;
+                    }
+                    Some(GithubCopilotSubcommand::Status) => {
+                        run_github_copilot_status(
+                            login_cli.config_overrides,
+                            copilot_cli.profile.as_ref(),
+                        )
+                        .await;
+                    }
+                    Some(GithubCopilotSubcommand::Logout) => {
+                        run_github_copilot_logout(login_cli.config_overrides).await;
+                    }
+                    Some(GithubCopilotSubcommand::Token) => {
+                        run_github_copilot_token(login_cli.config_overrides).await;
+                    }
+                    None => {
+                        run_login_with_github_copilot(
+                            login_cli.config_overrides,
+                            copilot_cli.login_args(),
+                        )
+                        .await;
+                    }
+                },
                 None => {
                     if login_cli.with_api_key && login_cli.with_access_token {
                         eprintln!(

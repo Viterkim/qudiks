@@ -1403,6 +1403,10 @@ impl App {
                 self.chat_widget
                     .add_token_activity_output(crate::chatwidget::TokenActivityView::Daily);
             }
+            AppEvent::CopilotUsageLoaded { result } => match result {
+                Ok(message) => self.chat_widget.add_info_message(message, /*hint*/ None),
+                Err(message) => self.chat_widget.add_error_message(message),
+            },
             AppEvent::OpenRateLimitResetCredits => {
                 let request_id = self.chat_widget.show_rate_limit_reset_loading_popup();
                 self.refresh_rate_limits(
