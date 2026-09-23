@@ -75,6 +75,7 @@ mod extension_sandbox;
 mod external_auth;
 mod fork_thread;
 mod git_enrichment;
+mod github_copilot_headers;
 mod guardian_authorization;
 #[path = "guardian_cached_score_tests.rs"]
 mod guardian_cached_score;

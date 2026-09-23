@@ -18,10 +18,13 @@ use std::sync::Arc;
 use crate::tools::handlers::parse_arguments;
 
 mod exec_command;
+mod grok_compat;
 mod write_stdin;
 
 pub use exec_command::ExecCommandHandler;
 pub(crate) use exec_command::ExecCommandHandlerOptions;
+pub(crate) use grok_compat::ExecCommandToolKind;
+pub use write_stdin::GrokWriteBashHandler;
 pub use write_stdin::WriteStdinHandler;
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +40,8 @@ pub(crate) struct ExecCommandArgs {
     yield_time_ms: u64,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    #[serde(default)]
+    grok_background: bool,
     #[serde(default)]
     max_output_tokens: Option<usize>,
     #[serde(default)]

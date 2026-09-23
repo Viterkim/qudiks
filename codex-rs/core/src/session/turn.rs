@@ -78,6 +78,7 @@ use codex_features::Feature;
 use codex_file_system::FindUpErrorPolicy;
 use codex_file_system::find_nearest_ancestor_with_markers;
 use codex_login::CodexAuth;
+use codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME;
 use codex_model_provider::RemoteCompactionSupport;
 use codex_protocol::ResponseItemId;
 use codex_protocol::config_types::AutoCompactTokenLimitScope;
@@ -2924,7 +2925,7 @@ async fn try_run_sampling_request(
                         sess.send_event(&turn_context, EventMsg::AgentMessageContentDelta(event))
                             .await;
                     }
-                } else {
+                } else if turn_context.provider.info().name != GITHUB_COPILOT_PROVIDER_NAME {
                     error_or_panic("OutputTextDelta without active item".to_string());
                 }
             }

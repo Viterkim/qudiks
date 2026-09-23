@@ -1,5 +1,8 @@
 pub(crate) mod debug_sandbox;
 mod exit_status;
+pub(crate) mod github_copilot_catalog;
+pub(crate) mod github_copilot_login;
+pub(crate) mod github_copilot_setup;
 pub(crate) mod login;
 
 use clap::Args;
@@ -12,6 +15,13 @@ use std::path::PathBuf;
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;
 pub use debug_sandbox::run_command_under_windows_sandbox;
+pub use github_copilot_login::GithubCopilotLoginArgs;
+pub use github_copilot_login::run_github_copilot_logout;
+pub use github_copilot_login::run_github_copilot_models;
+pub use github_copilot_login::run_github_copilot_setup;
+pub use github_copilot_login::run_github_copilot_status;
+pub use github_copilot_login::run_github_copilot_token;
+pub use github_copilot_login::run_login_with_github_copilot;
 pub use login::read_access_token_from_stdin;
 pub use login::read_api_key_from_stdin;
 pub use login::run_login_status;

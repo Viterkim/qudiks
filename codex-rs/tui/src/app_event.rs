@@ -702,6 +702,11 @@ pub(crate) enum AppEvent {
         view: Option<crate::analytics::TokenActivityView>,
     },
 
+    /// Copilot `/usage` finished fetching remaining AI credits.
+    CopilotUsageLoaded {
+        result: Result<String, String>,
+    },
+
     /// Open the reset-credit flow selected from the `/usage` menu.
     OpenRateLimitResetCredits,
 

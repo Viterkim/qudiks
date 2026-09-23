@@ -45,6 +45,7 @@ pub(crate) use environments_instructions::EnvironmentsInstructionsState;
 pub(crate) use managed_developer_instructions::ManagedDeveloperInstructions;
 pub(crate) use managed_developer_instructions::ManagedDeveloperInstructionsState;
 pub(crate) use managed_developer_instructions::validate_managed_developer_instructions;
+pub(crate) use model::ModelIdentityState;
 pub(crate) use model::ModelInstructionsState;
 pub(crate) use multi_agent_mode::MultiAgentModeState;
 pub(crate) use multi_agent_usage_hint::MultiAgentUsageHintState;

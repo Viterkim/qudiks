@@ -73,6 +73,9 @@ pub(crate) fn get_tooltip(
     fast_mode_enabled: bool,
     keymap: &TuiKeymap,
 ) -> Option<String> {
+    if plan.is_none() {
+        return Some("Du sparker på shift".to_string());
+    }
     let mut rng = rand::rng();
     preferred_tooltip(&mut rng, plan, fast_mode_enabled).or_else(|| pick_tooltip(&mut rng, keymap))
 }
