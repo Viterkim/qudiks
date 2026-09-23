@@ -21,7 +21,12 @@ use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
 use codex_protocol::account::ProviderAccount;
 use codex_protocol::error::CodexErr;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::protocol::SessionSource;
+use codex_tools::ToolSpec;
+use http::HeaderMap;
 
 use crate::ResolvedResponsesProvider;
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
@@ -147,6 +152,11 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         ProviderCapabilities::default()
     }
 
+    /// Returns whether this provider accepts namespaced tools for the selected model.
+    fn supports_namespace_tools(&self, _model_info: &ModelInfo) -> bool {
+        self.capabilities().namespace_tools
+    }
+
     /// Returns the preferred model used for automatic approval review.
     ///
     /// Providers that require backend-specific model IDs should override this.
@@ -171,6 +181,23 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
     /// Returns whether requests made through this provider should include attestation.
     fn supports_attestation(&self) -> bool {
         false
+    }
+
+    /// Drops or rewrites fields a provider cannot accept. Runs on the outgoing
+    /// copy only and must not change conversation meaning.
+    fn prepare_request_items(&self, _input: &mut [ResponseItem]) {}
+
+    /// Same, for the tool specs sent with a request.
+    fn prepare_request_tools(&self, _tools: &mut [ToolSpec]) {}
+
+    /// Provider-specific headers for a Responses request. May inspect input but
+    /// must not mutate the shared history.
+    fn responses_headers(
+        &self,
+        _input: &[ResponseItem],
+        _session_source: &SessionSource,
+    ) -> HeaderMap {
+        HeaderMap::new()
     }
 
     /// Returns the provider-scoped auth manager, when this provider uses one.
@@ -422,6 +449,10 @@ impl ModelProvider for ConfiguredModelProvider {
         }
     }
 
+    fn supports_namespace_tools(&self, model_info: &ModelInfo) -> bool {
+        crate::github_copilot::supports_namespace_tools(&self.info, model_info)
+    }
+
     fn approval_review_preferred_model(&self) -> &'static str {
         if self
             .auth_manager
@@ -451,6 +482,22 @@ impl ModelProvider for ConfiguredModelProvider {
             .as_ref()
             .and_then(|auth_manager| auth_manager.auth_cached())
             .is_some_and(|auth| auth.is_chatgpt_auth())
+    }
+
+    fn prepare_request_items(&self, input: &mut [ResponseItem]) {
+        crate::github_copilot::prepare_request_items(&self.info, input);
+    }
+
+    fn prepare_request_tools(&self, tools: &mut [ToolSpec]) {
+        crate::github_copilot::prepare_request_tools(&self.info, tools);
+    }
+
+    fn responses_headers(
+        &self,
+        input: &[ResponseItem],
+        session_source: &SessionSource,
+    ) -> HeaderMap {
+        crate::github_copilot::responses_headers(&self.info, input, session_source)
     }
 
     fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
@@ -640,6 +687,7 @@ mod tests {
     use codex_protocol::openai_models::ModelInfo;
     use codex_protocol::openai_models::ModelsResponse;
     use codex_protocol::protocol::SessionSource;
+
     use codex_utils_redacted_string::RedactedString;
     use pretty_assertions::assert_eq;
     use serde_json::json;

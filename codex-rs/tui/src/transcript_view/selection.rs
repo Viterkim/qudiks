@@ -8,6 +8,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::*;
 use crate::text_selection::SelectionUnit;
 
+const SELECTION_EDGE_SCROLL_ROWS: isize = 4;
+
 pub(super) struct Selection {
     pub(super) snapshot: ViewSnapshot,
     pub(super) start: Anchor,
@@ -298,7 +300,7 @@ impl TranscriptView {
             return false;
         };
         let previous = self.position;
-        self.scroll(cells, direction);
+        self.scroll(cells, direction * SELECTION_EDGE_SCROLL_ROWS);
         previous != self.position
     }
 

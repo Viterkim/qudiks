@@ -1148,7 +1148,9 @@ async fn run_ratatui_app(
     let workload_identity_selected = is_workload_identity_selected();
     color_eyre::install()?;
 
-    tooltips::announcement::prewarm(initial_config.http_client_factory());
+    if initial_config.model_provider_id != "github-copilot" {
+        tooltips::announcement::prewarm(initial_config.http_client_factory());
+    }
 
     // Forward panic reports through tracing so they appear in the UI status
     // line, but do not swallow the default/color-eyre panic handler.
@@ -1418,7 +1420,7 @@ async fn run_ratatui_app(
                 disconnect_info: None,
                 update_action: None,
                 exit_reason: ExitReason::Fatal(format!(
-                    "No saved session found with ID {id_str}. Run `codex {action}` without an ID to choose from existing sessions."
+                    "No saved session found with ID {id_str}. Run `qudiks {action}` without an ID to choose from existing sessions."
                 )),
             })
         };

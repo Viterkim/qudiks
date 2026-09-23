@@ -16,6 +16,8 @@ use ratatui::layout::Position as ScreenPosition;
 
 use super::*;
 
+const MOUSE_WHEEL_SCROLL_ROWS: isize = 6;
+
 pub(crate) enum ViewAction {
     Changed,
     Copy(String),
@@ -219,8 +221,8 @@ impl TranscriptView {
             selection.pointer = None;
         }
         match event.kind {
-            MouseEventKind::ScrollUp => self.scroll(cells, /*rows*/ -3),
-            MouseEventKind::ScrollDown => self.scroll(cells, /*rows*/ 3),
+            MouseEventKind::ScrollUp => self.scroll(cells, -MOUSE_WHEEL_SCROLL_ROWS),
+            MouseEventKind::ScrollDown => self.scroll(cells, MOUSE_WHEEL_SCROLL_ROWS),
             MouseEventKind::Down(MouseButton::Right) if inside => {
                 return self
                     .selected_text(cells)

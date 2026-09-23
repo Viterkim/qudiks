@@ -25,6 +25,7 @@ codex-model-provider-info = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-otel = { workspace = true }
 codex-protocol = { workspace = true }
+codex-tools = { workspace = true }
 codex-response-debug-context = { workspace = true }
 codex-secrets = { workspace = true }
 http = { workspace = true }

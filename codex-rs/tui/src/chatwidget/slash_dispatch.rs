@@ -532,7 +532,11 @@ impl ChatWidget {
             }
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
-                    self.open_usage_menu();
+                    if self.is_github_copilot_provider() {
+                        self.show_github_copilot_usage();
+                    } else {
+                        self.open_usage_menu();
+                    }
                 }
             }
             SlashCommand::Ide => {
@@ -778,13 +782,17 @@ impl ChatWidget {
             }
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
-                    match crate::analytics::TokenActivityView::parse(trimmed) {
-                        Some(view) => self
-                            .app_event_tx
-                            .send(AppEvent::OpenAnalytics { view: Some(view) }),
-                        None => self.add_error_message(
-                            "Usage: /usage [daily|weekly|cumulative]".to_string(),
-                        ),
+                    if self.is_github_copilot_provider() {
+                        self.show_github_copilot_usage();
+                    } else {
+                        match crate::analytics::TokenActivityView::parse(trimmed) {
+                            Some(view) => self
+                                .app_event_tx
+                                .send(AppEvent::OpenAnalytics { view: Some(view) }),
+                            None => self.add_error_message(
+                                "Usage: /usage [daily|weekly|cumulative]".to_string(),
+                            ),
+                        }
                     }
                 }
             }
@@ -1184,7 +1192,8 @@ impl ChatWidget {
             collaboration_modes_enabled: self.collaboration_modes_enabled(),
             connectors_enabled: self.connectors_enabled(),
             plugins_command_enabled: self.config.features.enabled(Feature::Plugins),
-            token_activity_command_enabled: self.has_codex_backend_auth,
+            token_activity_command_enabled: self.has_codex_backend_auth
+                || self.config.model_provider_id == "github-copilot",
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: self.fast_mode_enabled(),
             voice_command_enabled: self.realtime_conversation_available_for_thread,
@@ -1196,11 +1205,37 @@ impl ChatWidget {
     }
 
     fn ensure_usage_command_available(&mut self) -> bool {
-        if self.has_codex_backend_auth {
+        if self.has_codex_backend_auth || self.config.model_provider_id == "github-copilot" {
             return true;
         }
         self.add_error_message(USAGE_CHATGPT_LOGIN_REQUIRED.to_string());
         false
+    }
+
+    fn is_github_copilot_provider(&self) -> bool {
+        self.config.model_provider_id == "github-copilot"
+    }
+
+    fn show_github_copilot_usage(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let codex_home = self.config.codex_home.clone();
+        let auth_route_config = codex_login::AuthRouteConfig::from_http_client_factory(
+            self.config.http_client_factory(),
+        );
+        tokio::spawn(async move {
+            let result = match codex_login::github_copilot::fetch_quota_snapshot(
+                &codex_home,
+                &auth_route_config,
+            )
+            .await
+            {
+                Ok(snapshot) => Ok(codex_login::github_copilot::format_quota_snapshot(
+                    &snapshot,
+                )),
+                Err(err) => Err(err.to_string()),
+            };
+            tx.send(AppEvent::CopilotUsageLoaded { result });
+        });
     }
 
     fn queued_command_drain_result(&self, cmd: SlashCommand) -> QueueDrain {
