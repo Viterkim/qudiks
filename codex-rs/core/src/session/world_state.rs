@@ -13,6 +13,7 @@ use crate::context::world_state::EnvironmentsInstructionsState;
 use crate::context::world_state::EnvironmentsState;
 use crate::context::world_state::ManagedDeveloperInstructionsState;
 use crate::context::world_state::ModelCatalogState;
+use crate::context::world_state::ModelIdentityState;
 use crate::context::world_state::ModelInstructionsState;
 use crate::context::world_state::MultiAgentModeState;
 use crate::context::world_state::MultiAgentUsageHintState;
@@ -121,6 +122,14 @@ impl Session {
             &model_info.slug,
             previous_model.as_deref(),
             model_instructions,
+        ));
+        world_state.add_section(ModelIdentityState::new(
+            &model_info.slug,
+            &model_info.display_name,
+            settings
+                .effective_reasoning_effort()
+                .as_ref()
+                .map(|effort| effort.as_str()),
         ));
         let token_budget_enabled = turn_context.config.features.enabled(Feature::TokenBudget)
             && step_context

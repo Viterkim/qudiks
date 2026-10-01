@@ -1,6 +1,10 @@
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_tools::FreeformTool;
 use codex_tools::FreeformToolFormat;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
+use std::collections::BTreeMap;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("../../../assets/tools/apply_patch.lark");
 
@@ -25,6 +29,49 @@ pub fn create_apply_patch_freeform_tool(include_environment_id: bool) -> ToolSpe
             definition,
         },
     })
+}
+
+pub fn create_apply_patch_function_tool(include_environment_id: bool) -> ToolSpec {
+    let mut properties = BTreeMap::from([(
+        "patch".to_string(),
+        JsonSchema::string(Some(
+            "The complete patch, beginning with `*** Begin Patch` and ending with `*** End Patch`."
+                .to_string(),
+        )),
+    )]);
+    if include_environment_id {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Environment id from <environment_context>. Omit to use the primary environment."
+                    .to_string(),
+            )),
+        );
+    }
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "apply_patch".to_string(),
+        description: "Apply a patch to files. Pass the raw patch text in the `patch` field."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["patch".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: None,
+    })
+}
+
+pub fn create_apply_patch_tool(
+    tool_type: ApplyPatchToolType,
+    include_environment_id: bool,
+) -> ToolSpec {
+    match tool_type {
+        ApplyPatchToolType::Freeform => create_apply_patch_freeform_tool(include_environment_id),
+        ApplyPatchToolType::Function => create_apply_patch_function_tool(include_environment_id),
+    }
 }
 
 #[cfg(test)]

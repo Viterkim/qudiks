@@ -150,7 +150,7 @@ impl ChatWidget {
     ///
     /// When the active mask is already Plan, the override is applied immediately
     /// so the footer reflects it without waiting for the next mode switch.
-    /// Passing `None` resets to the Plan-mode preset default.
+    /// Passing `None` resets to the Plan preset's reasoning or the global default.
     pub(crate) fn set_plan_mode_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.config.plan_mode_reasoning_effort = effort.clone();
         if self.collaboration_modes_enabled()
@@ -170,8 +170,8 @@ impl ChatWidget {
 
     /// Set the reasoning effort for the non-Plan collaboration mode.
     ///
-    /// Does not touch the active Plan mask — Plan reasoning is controlled
-    /// exclusively by the Plan preset and `set_plan_mode_reasoning_effort`.
+    /// Does not touch the active Plan mask. Plan inherits this effort unless
+    /// the Plan preset or `set_plan_mode_reasoning_effort` overrides it.
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(
             /*model*/ None,
@@ -182,8 +182,6 @@ impl ChatWidget {
             && let Some(mask) = self.active_collaboration_mask.as_mut()
             && mask.mode != Some(ModeKind::Plan)
         {
-            // Generic "global default" updates should not mutate the active Plan mask.
-            // Plan reasoning is controlled by the Plan preset and Plan-only override updates.
             mask.reasoning_effort = Some(effort);
         }
         self.refresh_model_dependent_surfaces();
@@ -256,8 +254,9 @@ impl ChatWidget {
         self.bottom_pane
             .set_connectors_enabled(self.connectors_enabled());
         self.refresh_connector_mentions(/*force_refresh*/ false);
-        self.bottom_pane
-            .set_token_activity_command_enabled(has_codex_backend_auth);
+        self.bottom_pane.set_token_activity_command_enabled(
+            has_codex_backend_auth || self.config.model_provider_id == "github-copilot",
+        );
         self.refresh_status_surfaces();
     }
 

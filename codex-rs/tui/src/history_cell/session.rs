@@ -44,7 +44,7 @@ pub(crate) fn with_border_with_inner_width(
 pub(crate) fn codex_title(version: &str) -> Vec<Span<'static>> {
     vec![
         ">_ ".fg(accent_color()),
-        "OpenAI Codex".bold(),
+        CODEX_DISPLAY_NAME.bold(),
         format!(" (v{version})").dim(),
     ]
 }
@@ -184,7 +184,7 @@ pub(crate) fn new_session_info(
         model_display_name.to_string(),
         session.reasoning_effort.clone(),
         config.cwd.to_path_buf(),
-        CODEX_CLI_VERSION,
+        CODEX_DISPLAY_VERSION,
     )
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
@@ -362,7 +362,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         let mut lines = vec![
-            Line::from(format!("OpenAI Codex (v{})", self.version)),
+            Line::from(format!("{CODEX_DISPLAY_NAME} (v{})", self.version)),
             Line::from(format!(
                 "model: {}{}",
                 self.model,

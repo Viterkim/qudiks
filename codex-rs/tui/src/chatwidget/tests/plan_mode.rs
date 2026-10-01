@@ -324,13 +324,14 @@ async fn reasoning_selection_in_plan_mode_matching_plan_effort_but_different_glo
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
     chat.thread_id = Some(ThreadId::new());
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Medium));
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
     let _ = drain_insert_history(&mut rx);
     set_chatgpt_auth(&mut chat);
 
-    // Reproduce: Plan effective reasoning remains the preset (medium), but the
+    // Reproduce: Plan effective reasoning remains the override (medium), but the
     // global default differs (high). Pressing Enter on the current Plan choice
     // should open the scope prompt rather than silently rewriting the global default.
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
@@ -354,6 +355,7 @@ async fn reasoning_shortcut_in_plan_mode_updates_plan_override_without_prompt_or
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
     chat.thread_id = Some(ThreadId::new());
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Medium));
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
     chat.set_collaboration_mask(plan_mask);
@@ -676,7 +678,7 @@ async fn plan_reasoning_scope_popup_mentions_selected_reasoning() {
 }
 
 #[tokio::test]
-async fn plan_reasoning_scope_popup_mentions_built_in_plan_default_when_no_override() {
+async fn plan_reasoning_scope_popup_mentions_global_default_when_no_override() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.5")).await;
     chat.open_plan_reasoning_scope_prompt(
         "gpt-5.5".to_string(),
@@ -688,7 +690,7 @@ async fn plan_reasoning_scope_popup_mentions_built_in_plan_default_when_no_overr
         popup
             .split_whitespace()
             .collect::<String>()
-            .contains("built-inPlandefault(medium)")
+            .contains("globaldefaultreasoning")
     );
 }
 
@@ -1348,14 +1350,36 @@ async fn enter_submits_when_plan_stream_is_not_active() {
 async fn collab_mode_shift_tab_cycles_only_when_idle() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    let initial = chat.current_collaboration_mode().clone();
-    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
-    assert_eq!(chat.current_collaboration_mode(), &initial);
-
-    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-    assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Default);
-    assert_eq!(chat.current_collaboration_mode(), &initial);
+    for effort in [
+        None,
+        Some(ReasoningEffortConfig::None),
+        Some(ReasoningEffortConfig::Low),
+        Some(ReasoningEffortConfig::High),
+        Some(ReasoningEffortConfig::XHigh),
+        Some(ReasoningEffortConfig::Ultra),
+    ] {
+        chat.set_reasoning_effort(effort);
+        let initial = chat.current_collaboration_mode().clone();
+        for mode in [ModeKind::Plan, ModeKind::Default] {
+            chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+            assert_eq!(chat.active_collaboration_mode_kind(), mode);
+            assert_eq!(
+                (
+                    chat.current_model(),
+                    chat.effective_reasoning_effort(),
+                    chat.effective_collaboration_mode()
+                        .settings
+                        .reasoning_effort,
+                ),
+                (
+                    initial.model(),
+                    initial.reasoning_effort(),
+                    initial.reasoning_effort(),
+                )
+            );
+            assert_eq!(chat.current_collaboration_mode(), &initial);
+        }
+    }
 
     chat.on_task_started();
     let before = chat.active_collaboration_mode_kind();
@@ -1381,7 +1405,7 @@ async fn mode_switch_surfaces_model_change_notification_when_effective_model_cha
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        plan_messages.contains("Model changed to gpt-5.6-luna medium for Plan mode."),
+        plan_messages.contains("Model changed to gpt-5.6-luna default for Plan mode."),
         "expected Plan-mode model switch notice, got: {plan_messages:?}"
     );
 
@@ -1407,6 +1431,7 @@ async fn mode_switch_surfaces_reasoning_change_notification_when_model_stays_sam
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.6-terra")).await;
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
     chat.set_reasoning_effort(Some(ReasoningEffortConfig::High));
+    chat.set_plan_mode_reasoning_effort(Some(ReasoningEffortConfig::Medium));
 
     let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
         .expect("expected plan collaboration mode");
@@ -1677,7 +1702,7 @@ async fn set_model_updates_active_collaboration_mask() {
 }
 
 #[tokio::test]
-async fn set_reasoning_effort_updates_active_collaboration_mask() {
+async fn set_reasoning_effort_updates_inherited_plan_reasoning() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.6-terra")).await;
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
     let plan_mask = collaboration_modes::mask_for_kind(chat.model_catalog.as_ref(), ModeKind::Plan)
@@ -1686,10 +1711,7 @@ async fn set_reasoning_effort_updates_active_collaboration_mask() {
 
     chat.set_reasoning_effort(/*effort*/ None);
 
-    assert_eq!(
-        chat.current_reasoning_effort(),
-        Some(ReasoningEffortConfig::Medium)
-    );
+    assert_eq!(chat.current_reasoning_effort(), None);
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
 }
 

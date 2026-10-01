@@ -100,6 +100,7 @@ tokio = { workspace = true, features = [
     "time",
 ] }
 toml = { workspace = true }
+toml_edit = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -126,6 +127,7 @@ assert_matches = { workspace = true }
 codex-app-server-client = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 codex-utils-pty = { workspace = true }
+core_test_support = { workspace = true }
 flate2 = { workspace = true }
 insta = { workspace = true }
 jsonwebtoken = { workspace = true }

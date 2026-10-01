@@ -268,10 +268,38 @@ impl ChatWidget {
         if self.thread_usage_is_available() {
             handle.reserve_thread_usage_label_width();
             handle.set_thread_usage(self.estimated_thread_usage().cloned());
-            self.add_to_history(cell);
-            self.request_thread_usage_for_status(handle.clone());
+        }
+        if self.config.model_provider_id == "github-copilot" {
+            let tx = self.app_event_tx.clone();
+            let codex_home = self.config.codex_home.clone();
+            let auth_route_config = codex_login::AuthRouteConfig::from_http_client_factory(
+                self.config.http_client_factory(),
+            );
+            let thread_id = self.thread_id;
+            let status_handle = handle.clone();
+            tokio::spawn(async move {
+                let snapshot = tokio::time::timeout(
+                    Duration::from_secs(/*secs*/ 6),
+                    codex_login::github_copilot::fetch_quota_snapshot(
+                        &codex_home,
+                        &auth_route_config,
+                    ),
+                )
+                .await
+                .ok()
+                .and_then(Result::ok);
+                tx.send(AppEvent::CopilotStatusUsageLoaded {
+                    thread_id,
+                    cell,
+                    handle: status_handle,
+                    snapshot,
+                });
+            });
         } else {
             self.add_to_history(cell);
+        }
+        if self.thread_usage_is_available() {
+            self.request_thread_usage_for_status(handle.clone());
         }
         // Capture the displayed status inputs before later configuration or thread changes.
         let mut copy_targets = vec![
