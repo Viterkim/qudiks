@@ -60,7 +60,9 @@ impl App {
                     | AppEvent::TranscriptCopyClosed
                     | AppEvent::ConfirmDaemonUpdate(_)
                     | AppEvent::RunDaemonUpdate(_)
+                    | AppEvent::RunQudiksUpdate
                     | AppEvent::InsertHistoryCell(_)
+                    | AppEvent::CopilotStatusUsageLoaded { .. }
                     | AppEvent::CommitRealtimeTranscriptHistory
                     | AppEvent::ResetTranscriptForThreadSwitch
                     | AppEvent::ResetTranscriptForThreadSwitchPreservingScreen
@@ -142,6 +144,10 @@ impl App {
             AppEvent::RunDaemonUpdate(source) => {
                 self.pending_update_action = Some(UpdateAction::Daemon(source));
                 return Ok(self.handle_exit_mode(app_server, ExitMode::Immediate).await);
+            }
+            AppEvent::RunQudiksUpdate => {
+                self.pending_update_action = Some(UpdateAction::QudiksBinary);
+                return Ok(self.handle_exit_mode(app_server, ExitMode::ShutdownFirst).await);
             }
             AppEvent::UserVerificationApproved { thread_id, server_name, request_id } => {
                 Box::pin(self.start_user_verification(app_server, thread_id, server_name, request_id)).await?;
@@ -1940,6 +1946,21 @@ impl App {
                 self.overlay = Some(Overlay::Analytics(view));
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::CopilotUsageLoaded { result } => match result {
+                Ok(message) => self.chat_widget.add_info_message(message, /*hint*/ None),
+                Err(message) => self.chat_widget.add_error_message(message),
+            },
+            AppEvent::CopilotStatusUsageLoaded {
+                thread_id,
+                cell,
+                handle,
+                snapshot,
+            } => {
+                if self.chat_widget.thread_id() == thread_id {
+                    handle.set_copilot_usage(snapshot);
+                    self.chat_widget.add_to_history(cell);
+                }
+            }
             AppEvent::OpenRateLimitResetCredits => {
                 let request_id = self.chat_widget.show_rate_limit_reset_loading_popup();
                 self.refresh_rate_limits(
@@ -2937,7 +2958,7 @@ impl App {
             #[cfg(any(unix, windows))]
             AppEvent::AgentsDaemonStarted { result } => match result {
                 Ok(()) => self.chat_widget.add_info_message(
-                    "Background server started. Run `codex agents` in another terminal; this session remains unchanged."
+                    "Background server started. Run `qudiks agents` in another terminal; this session remains unchanged."
                         .to_string(),
                     /*hint*/ None,
                 ),

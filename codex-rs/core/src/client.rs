@@ -100,6 +100,7 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_tools::ToolSpec;
+use codex_tools::create_tools_json_for_responses_api;
 use codex_tools::create_tools_json_for_responses_lite;
 use codex_tools::create_tools_raw_json_for_responses_api;
 use eventsource_stream::Event;
@@ -904,6 +905,8 @@ impl ModelClient {
             // Filter only the request copy; persisted history remains unchanged.
             input.retain(|item| !matches!(item, ResponseItem::ConfigurationUpdate { .. }));
         }
+        let mut prompt_tools = prompt.tools.to_vec();
+        self.state.provider.prepare_request_tools(&mut prompt_tools);
         let is_openai = self.state.provider.info().is_openai();
         // These prompt-only items are rebuilt on every request. Hash their visible payloads
         // within the thread so retries and resumed sessions preserve their identity.
@@ -913,8 +916,12 @@ impl ModelClient {
         );
         let mut prefix = Vec::new();
         let tools = if model_info.use_responses_lite {
-            if !prompt.tools.is_empty() {
-                let tools = create_tools_json_for_responses_lite(&prompt.tools)?;
+            if !prompt_tools.is_empty() {
+                let tools = if self.state.provider.supports_namespace_tools(model_info) {
+                    create_tools_json_for_responses_lite(&prompt_tools)?
+                } else {
+                    create_tools_json_for_responses_api(&prompt_tools)?
+                };
                 prefix.push(ResponseItem::AdditionalTools {
                     id: Some(ResponseItemId::with_suffix(
                         "at",
@@ -926,7 +933,7 @@ impl ModelClient {
             }
             None
         } else {
-            Some(create_tools_raw_json_for_responses_api(&prompt.tools)?.into())
+            Some(create_tools_raw_json_for_responses_api(&prompt_tools)?.into())
         };
         if !prompt.base_instructions.text.is_empty() {
             let mut instructions = ContextualUserFragment::into(BaseInstructionsFragment(
@@ -993,11 +1000,18 @@ impl ModelClient {
             }
         }
         let client_metadata = responses_metadata.client_metadata(include_internal);
+        self.state
+            .provider
+            .prepare_model_request_items(model_info, &mut input);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: if prompt_tools.is_empty() {
+                String::new()
+            } else {
+                "auto".to_string()
+            },
             parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
             reasoning: Some(reasoning),
             store: false,
@@ -1751,6 +1765,16 @@ impl ModelClientSession {
             )?;
             self.client
                 .prepare_response_items_for_request(&mut request.input);
+            self.client
+                .state
+                .provider
+                .prepare_request_items(&mut request.input);
+            options.extra_headers.extend(
+                self.client
+                    .state
+                    .provider
+                    .responses_headers(&request.input, &self.client.state.session_source),
+            );
             if crate::guardian::is_basic_session_source(&self.client.state.session_source) {
                 crate::guardian::observe_guardian_request(session_telemetry, &request);
             }

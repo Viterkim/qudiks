@@ -7,7 +7,7 @@ use crate::line_truncation::line_width;
 use crate::style::accent_color;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::CODEX_DISPLAY_VERSION;
 use chrono::DateTime;
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
@@ -29,6 +29,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::account::StatusAccountDisplay;
+use super::copilot_usage::StatusCopilotUsage;
 use super::format::FieldFormatter;
 use super::format::push_label;
 use super::helpers::compose_account_display;
@@ -120,6 +121,13 @@ impl StatusHistoryHandle {
     ) {
         self.card.thread_usage.set_estimate(estimate);
     }
+
+    pub(crate) fn set_copilot_usage(
+        &self,
+        snapshot: Option<codex_login::github_copilot::CopilotQuotaSnapshot>,
+    ) {
+        self.card.copilot_usage.set_snapshot(snapshot);
+    }
 }
 
 #[derive(Debug)]
@@ -138,6 +146,7 @@ struct StatusHistoryCell {
     session_id: Option<String>,
     forked_from: Option<String>,
     token_usage: StatusTokenUsageData,
+    copilot_usage: StatusCopilotUsage,
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
     thread_usage: StatusThreadUsage,
 }
@@ -396,6 +405,7 @@ impl StatusHistoryCell {
             session_id,
             forked_from,
             token_usage,
+            copilot_usage: StatusCopilotUsage::default(),
             agents_summary,
             rate_limit_state,
             thread_usage,
@@ -745,7 +755,7 @@ impl StatusHistoryCell {
                 (None, None) => "ChatGPT".to_string(),
             },
             StatusAccountDisplay::ApiKey => {
-                "API key configured (run codex login to use ChatGPT)".to_string()
+                "API key configured (run qudiks login to use ChatGPT)".to_string()
             }
         });
 
@@ -786,6 +796,9 @@ impl StatusHistoryCell {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
         push_label(&mut labels, &mut seen, "Token usage");
+        if self.model_provider.as_deref() == Some("github-copilot") {
+            StatusCopilotUsage::push_labels(&mut labels, &mut seen);
+        }
         if self.token_usage.context_window.is_some() {
             push_label(&mut labels, &mut seen, "Context window");
         }
@@ -852,6 +865,10 @@ impl StatusHistoryCell {
         }
 
         lines.push(Line::from(Vec::<Span<'static>>::new()));
+        if self.model_provider.as_deref() == Some("github-copilot") {
+            lines.extend(self.copilot_usage.lines(&formatter));
+            lines.push(Line::from(Vec::<Span<'static>>::new()));
+        }
         // Hide token usage only for ChatGPT subscribers
         if !matches!(self.account, Some(StatusAccountDisplay::ChatGpt { .. })) {
             lines.push(formatter.line("Token usage", self.token_usage_spans()));
@@ -861,7 +878,14 @@ impl StatusHistoryCell {
             lines.push(formatter.line("Context window", spans));
         }
 
-        lines.extend(self.rate_limit_lines(&rate_limit_state, available_width, &formatter));
+        if self.model_provider.as_deref() != Some("github-copilot")
+            || !matches!(
+                &rate_limit_state.rate_limits,
+                StatusRateLimitData::Missing | StatusRateLimitData::Unavailable
+            )
+        {
+            lines.extend(self.rate_limit_lines(&rate_limit_state, available_width, &formatter));
+        }
         let thread_usage_lines = self.thread_usage.lines(&formatter, value_width);
         if !thread_usage_lines.is_empty() {
             lines.push(Line::from(Vec::<Span<'static>>::new()));
@@ -875,7 +899,7 @@ impl StatusHistoryCell {
             ""
         };
         let mut title = vec![indent.into()];
-        title.extend(crate::history_cell::codex_title(CODEX_CLI_VERSION));
+        title.extend(crate::history_cell::codex_title(CODEX_DISPLAY_VERSION));
         let mut rendered = word_wrap_lines(
             [Line::from(title)],
             RtOptions::new(available_width).subsequent_indent(indent.into()),

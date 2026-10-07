@@ -3,6 +3,8 @@ use super::SectionTransition;
 use super::WorldStateSection;
 use super::WorldStateUpdate;
 use crate::context::ContextualUserFragment;
+use crate::context::InternalContextSource;
+use crate::context::InternalModelContextFragment;
 use crate::context::ModelSwitchInstructions;
 
 /// Model identity and the instructions needed when that identity changes.
@@ -60,6 +62,64 @@ impl WorldStateSection for ModelInstructionsState {
         (
             Some(current),
             WorldStateUpdate::optional_standalone_boxed_fragment(fragment),
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ModelIdentityState {
+    identity: String,
+}
+
+impl ModelIdentityState {
+    pub(crate) fn new(model: &str, display_name: &str, reasoning_effort: Option<&str>) -> Self {
+        let model = model.chars().take(128).collect::<String>();
+        let display_name = display_name.chars().take(128).collect::<String>();
+        let identity = match reasoning_effort {
+            Some(effort) => {
+                let effort = effort.chars().take(64).collect::<String>();
+                format!(
+                    "Current model: {display_name} (ID: {model}); reasoning effort: {effort}. This is the runtime selection for this step."
+                )
+            }
+            None => format!(
+                "Current model: {display_name} (ID: {model}). This is the runtime selection for this step."
+            ),
+        };
+        Self { identity }
+    }
+}
+
+impl WorldStateSection for ModelIdentityState {
+    const ID: &'static str = "model_identity";
+    type Snapshot = String;
+
+    fn has_retained_fragment_matcher() -> bool {
+        true
+    }
+
+    fn matches_retained_fragment(role: &str, text: &str) -> bool {
+        role == "user"
+            && text
+                .trim()
+                .starts_with("<codex_internal_context source=\"model_identity\">")
+    }
+
+    fn render_diff(
+        &self,
+        previous: PreviousSectionState<'_, Self::Snapshot>,
+    ) -> SectionTransition<Self::Snapshot> {
+        if matches!(previous, PreviousSectionState::Known(previous) if previous == &self.identity) {
+            return (None, Vec::new());
+        }
+        (
+            Some(self.identity.clone()),
+            vec![WorldStateUpdate::fragment(
+                InternalModelContextFragment::new(
+                    InternalContextSource::from_static(Self::ID),
+                    &self.identity,
+                ),
+            )],
         )
     }
 }

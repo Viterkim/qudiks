@@ -306,6 +306,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 pub(crate) use interaction::KeyEventAction;
+mod qudiks_update;
 mod skills;
 mod slash_dispatch;
 mod worktree_picker;
@@ -2059,6 +2060,9 @@ impl Drop for ChatWidget {
     }
 }
 
+#[cfg(not(test))]
+const PLACEHOLDER: &str = "Qudiks siger spurgt?";
+#[cfg(test)]
 const PLACEHOLDER: &str = "Ask Codex to do anything";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 

@@ -1,6 +1,10 @@
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_tools::FreeformTool;
 use codex_tools::FreeformToolFormat;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
+use std::collections::BTreeMap;
 
 const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("../../../assets/tools/apply_patch.lark");
 
@@ -25,6 +29,49 @@ pub fn create_apply_patch_freeform_tool(include_environment_id: bool) -> ToolSpe
             definition,
         },
     })
+}
+
+pub fn create_apply_patch_function_tool(include_environment_id: bool) -> ToolSpec {
+    let mut properties = BTreeMap::from([(
+        "patch".to_string(),
+        JsonSchema::string(Some(
+            "The complete patch text. The first line must be exactly `*** Begin Patch` and the last line exactly `*** End Patch`, with no trailing asterisks, code fences, or other text."
+                .to_string(),
+        )),
+    )]);
+    if include_environment_id {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Environment id from <environment_context>. Omit to use the primary environment."
+                    .to_string(),
+            )),
+        );
+    }
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "apply_patch".to_string(),
+        description: "Apply a patch to files using JSON arguments. Example: {\"patch\":\"*** Begin Patch\\n*** Update File: example.txt\\n@@\\n-old\\n+new\\n*** End Patch\"}. Use actual newlines inside the decoded patch string. Begin/end delimiters have three leading asterisks and no trailing asterisks."
+            .to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(
+            properties,
+            Some(vec!["patch".to_string()]),
+            Some(false.into()),
+        ),
+        output_schema: None,
+    })
+}
+
+pub fn create_apply_patch_tool(
+    tool_type: ApplyPatchToolType,
+    include_environment_id: bool,
+) -> ToolSpec {
+    match tool_type {
+        ApplyPatchToolType::Freeform => create_apply_patch_freeform_tool(include_environment_id),
+        ApplyPatchToolType::Function => create_apply_patch_function_tool(include_environment_id),
+    }
 }
 
 #[cfg(test)]
