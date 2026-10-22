@@ -57,24 +57,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for WebSearchTool {
     }
 
     fn spec(&self) -> ToolSpec {
-        // parse schema without compaction that removes field metadata/descriptions to match hosted tool definition
-        let parameters = match parse_tool_input_schema_without_compaction(&commands_schema()) {
-            Ok(parameters) => parameters,
-            Err(err) => panic!("search command schema should parse: {err}"),
-        };
-
-        ToolSpec::Namespace(ResponsesApiNamespace {
-            name: WEB_NAMESPACE.to_string(),
-            description: default_namespace_description(WEB_NAMESPACE),
-            tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
-                name: RUN_TOOL_NAME.to_string(),
-                description: WEB_RUN_DESCRIPTION.to_string(),
-                strict: false,
-                parameters,
-                output_schema: None,
-                defer_loading: None,
-            })],
-        })
+        self.codex_spec()
     }
 
     fn exposure(&self) -> ToolExposure {
@@ -94,12 +77,47 @@ impl<'call> ToolExecutor<ToolCall<'call>> for WebSearchTool {
 }
 
 impl WebSearchTool {
+    fn codex_spec(&self) -> ToolSpec {
+        // parse schema without compaction that removes field metadata/descriptions to match hosted tool definition
+        let parameters = match parse_tool_input_schema_without_compaction(&commands_schema()) {
+            Ok(parameters) => parameters,
+            Err(err) => panic!("search command schema should parse: {err}"),
+        };
+
+        let tool = ResponsesApiTool {
+            name: RUN_TOOL_NAME.to_string(),
+            description: WEB_RUN_DESCRIPTION.to_string(),
+            strict: false,
+            parameters,
+            output_schema: None,
+            defer_loading: None,
+        };
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: WEB_NAMESPACE.to_string(),
+            description: default_namespace_description(WEB_NAMESPACE),
+            tools: vec![ResponsesApiNamespaceTool::Function(tool)],
+        })
+    }
+
     async fn handle_call(
         &self,
         call: ToolCall<'_>,
     ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
         let commands = parse_commands(&call)?;
         let command_action = command_action(&commands);
+        call.turn_item_emitter
+            .emit_started(extension_turn_item(
+                WebSearchItem {
+                    id: call.call_id.clone(),
+                    query: String::new(),
+                    action: None,
+                    results: None,
+                },
+                EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                    call_id: call.call_id.clone(),
+                }),
+            ))
+            .await;
         let provider = self
             .provider
             .api_provider()
@@ -132,19 +150,6 @@ impl WebSearchTool {
             self.originator.as_deref(),
             call.codex_turn_metadata.as_deref(),
         );
-        call.turn_item_emitter
-            .emit_started(extension_turn_item(
-                WebSearchItem {
-                    id: call.call_id.clone(),
-                    query: String::new(),
-                    action: None,
-                    results: None,
-                },
-                EventMsg::WebSearchBegin(WebSearchBeginEvent {
-                    call_id: call.call_id.clone(),
-                }),
-            ))
-            .await;
         let response = client
             .search(&request, extra_headers)
             .await
