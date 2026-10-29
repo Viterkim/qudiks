@@ -14,9 +14,12 @@ use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::WriteStdinInteractionEvent;
 use crate::unified_exec::WriteStdinRequest;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 use super::super::shell_spec::create_write_stdin_tool;
 use super::post_unified_exec_tool_use_payload;
@@ -42,6 +45,16 @@ impl WriteStdinArgs {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct GrokWriteBashArgs {
+    #[serde(rename = "shellId")]
+    shell_id: i32,
+    #[serde(default)]
+    input: String,
+    #[serde(default)]
+    delay: Option<f64>,
+}
+
 pub struct WriteStdinHandler;
 
 impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
@@ -62,6 +75,79 @@ impl ToolExecutor<ToolInvocation> for WriteStdinHandler {
         ToolInvocation: 'a,
     {
         Box::pin(self.handle_call(invocation))
+    }
+}
+
+pub struct GrokWriteBashHandler;
+
+impl ToolExecutor<ToolInvocation> for GrokWriteBashHandler {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("write_bash")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::Function(ResponsesApiTool {
+            name: "write_bash".to_string(),
+            description: "Write input to or poll a running bash session.".to_string(),
+            strict: false,
+            defer_loading: None,
+            parameters: JsonSchema::object(
+                BTreeMap::from([
+                    (
+                        "shellId".to_string(),
+                        JsonSchema::integer(Some(
+                            "The shell session identifier returned by bash.".to_string(),
+                        )),
+                    ),
+                    (
+                        "input".to_string(),
+                        JsonSchema::string(Some(
+                            "Text or keyboard input to send. Omit to poll.".to_string(),
+                        )),
+                    ),
+                    (
+                        "delay".to_string(),
+                        JsonSchema::integer(Some(
+                            "Seconds to wait for output before returning.".to_string(),
+                        )),
+                    ),
+                ]),
+                Some(vec!["shellId".to_string()]),
+                Some(false.into()),
+            ),
+            output_schema: None,
+        })
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        true
+    }
+
+    fn handle<'a>(&'a self, mut invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'a>
+    where
+        ToolInvocation: 'a,
+    {
+        Box::pin(async move {
+            let ToolPayload::Function { arguments } = &invocation.payload else {
+                return Err(FunctionCallError::RespondToModel(
+                    "write_bash handler received unsupported payload".to_string(),
+                ));
+            };
+            let args: GrokWriteBashArgs = parse_arguments(arguments)?;
+            let yield_time_ms = args
+                .delay
+                .map(|seconds| seconds.clamp(1.0, 300.0) as u64 * 1_000)
+                .unwrap_or_else(|| if args.input.is_empty() { 5_000 } else { 250 });
+            invocation.payload = ToolPayload::Function {
+                arguments: serde_json::to_string(&serde_json::json!({
+                    "session_id": args.shell_id,
+                    "chars": args.input,
+                    "yield_time_ms": yield_time_ms,
+                }))
+                .map_err(|err| FunctionCallError::Fatal(err.to_string()))?,
+            };
+            WriteStdinHandler.handle_call(invocation).await
+        })
     }
 }
 
@@ -152,6 +238,28 @@ impl CoreToolRuntime for WriteStdinHandler {
     ) -> Option<PostToolUsePayload> {
         // A `write_stdin` poll can observe final completion for the original
         // `exec_command`; emit that command's matching Bash PostToolUse.
+        post_unified_exec_tool_use_payload(invocation, result)
+    }
+}
+
+impl CoreToolRuntime for GrokWriteBashHandler {
+    fn live_environment_resolver(&self) -> Option<LiveEnvironmentResolver> {
+        Some(super::terminal_session_for_input)
+    }
+
+    fn matches_kind(&self, payload: &ToolPayload) -> bool {
+        matches!(payload, ToolPayload::Function { .. })
+    }
+
+    fn pre_tool_use_payload(&self, _invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
+        None
+    }
+
+    fn post_tool_use_payload(
+        &self,
+        invocation: &ToolInvocation,
+        result: &dyn crate::tools::context::ToolOutput,
+    ) -> Option<PostToolUsePayload> {
         post_unified_exec_tool_use_payload(invocation, result)
     }
 }

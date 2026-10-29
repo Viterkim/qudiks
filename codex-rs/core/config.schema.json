@@ -5438,7 +5438,7 @@
         },
         "status_line": {
           "default": null,
-          "description": "Ordered list of status line item identifiers.\n\nWhen set, the TUI renders the selected items as the status line. When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, and `thread-name`.",
+          "description": "Ordered list of status line item identifiers.\n\nWhen set, the TUI renders the selected items as the status line. When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, `provider`, and `thread-name`.",
           "items": {
             "type": "string"
           },
@@ -7306,6 +7306,12 @@
       "description": "Wire protocol that the provider speaks.",
       "oneOf": [
         {
+          "enum": [
+            "chat_completions"
+          ],
+          "type": "string"
+        },
+        {
           "description": "The Responses API exposed by OpenAI at `/v1/responses`.",
           "enum": [
             "responses"
@@ -8319,12 +8325,19 @@
       "description": "Controls whether the auto-compaction limit applies to the full context or only to tokens after the carried prefix in the current compaction window."
     },
     "model_catalog_json": {
-      "allOf": [
+      "anyOf": [
         {
           "$ref": "#/definitions/AbsolutePathBuf"
+        },
+        {
+          "enum": [
+            false
+          ],
+          "type": "boolean"
         }
       ],
-      "description": "Optional path to a JSON model catalog (applied on startup only). Per-thread `config` overrides are accepted but do not reapply this (no-ops)."
+      "default": null,
+      "description": "Optional path to a JSON model catalog (applied on startup only). Set false to use provider discovery. Per-thread `config` overrides are accepted but do not reapply this (no-ops)."
     },
     "model_context_window": {
       "description": "Size of the context window for the model, in tokens.",

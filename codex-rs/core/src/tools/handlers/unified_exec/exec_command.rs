@@ -39,6 +39,7 @@ use codex_utils_string::truncate_middle_chars;
 use super::super::shell_spec::CommandToolOptions;
 use super::super::shell_spec::create_exec_command_tool_with_environment_id;
 use super::ExecCommandArgs;
+use super::ExecCommandToolKind;
 use super::ExecCommandWorkdirArgs;
 use super::post_unified_exec_tool_use_payload;
 use super::preparation::ExecCommandLifetime;
@@ -53,6 +54,7 @@ pub(crate) struct ExecCommandHandlerOptions {
     pub(crate) exec_permission_approvals_enabled: bool,
     pub(crate) include_environment_id: bool,
     pub(crate) include_windows_shell_guidance: bool,
+    pub(crate) tool_kind: ExecCommandToolKind,
 }
 
 pub struct ExecCommandHandler {
@@ -69,6 +71,7 @@ impl Default for ExecCommandHandler {
                 exec_permission_approvals_enabled: false,
                 include_environment_id: false,
                 include_windows_shell_guidance: cfg!(windows),
+                tool_kind: ExecCommandToolKind::Codex,
             },
         }
     }
@@ -88,14 +91,21 @@ impl ExecCommandHandler {
             lifetime: ExecCommandLifetime::OneShot,
         }
     }
+
+    fn normalize_arguments(&self, arguments: String) -> Result<String, FunctionCallError> {
+        self.options.tool_kind.normalize_arguments(arguments)
+    }
 }
 
 impl ToolExecutor<ToolInvocation> for ExecCommandHandler {
     fn tool_name(&self) -> ToolName {
-        ToolName::plain("exec_command")
+        self.options.tool_kind.tool_name()
     }
 
     fn spec(&self) -> ToolSpec {
+        if let Some(spec) = self.options.tool_kind.spec() {
+            return spec;
+        }
         let spec = create_exec_command_tool_with_environment_id(
             CommandToolOptions {
                 exec_permission_approvals_enabled: self.options.exec_permission_approvals_enabled,
@@ -154,6 +164,7 @@ impl ExecCommandHandler {
                 ));
             }
         };
+        let arguments = self.normalize_arguments(arguments)?;
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
         let context = UnifiedExecContext::new(
@@ -174,7 +185,14 @@ impl ExecCommandHandler {
             &turn_environment.selection.environment_id,
         )
         .await;
-        let prepared = parsed.prepare(self.lifetime)?;
+        let lifetime = if self.options.tool_kind == ExecCommandToolKind::GrokBash
+            && !parsed.args.grok_background
+        {
+            ExecCommandLifetime::OneShot
+        } else {
+            self.lifetime
+        };
+        let prepared = parsed.prepare(lifetime)?;
         let max_output_tokens = prepared.max_output_tokens;
         let fs = prepared.turn_environment.environment.get_filesystem();
         let intercepted_patch = intercept_apply_patch(
@@ -338,8 +356,9 @@ impl CoreToolRuntime for ExecCommandHandler {
             return None;
         };
 
-        parse_arguments::<ExecCommandArgs>(arguments)
+        self.normalize_arguments(arguments.clone())
             .ok()
+            .and_then(|arguments| parse_arguments::<ExecCommandArgs>(&arguments).ok())
             .map(|args| PreToolUsePayload {
                 tool_name: HookToolName::bash(),
                 tool_input: serde_json::json!({ "command": args.cmd }),
@@ -374,11 +393,16 @@ impl CoreToolRuntime for ExecCommandHandler {
                 "hook input rewrite received unsupported exec_command payload".to_string(),
             ));
         };
+        let Some((tool_name, command_field)) = self.options.tool_kind.hook_rewrite() else {
+            return Err(FunctionCallError::RespondToModel(
+                "hook command rewrites are unavailable for this file tool".to_string(),
+            ));
+        };
         invocation.payload = ToolPayload::Function {
             arguments: rewrite_function_string_argument(
                 &arguments,
-                "exec_command",
-                "cmd",
+                tool_name,
+                command_field,
                 updated_hook_command(&updated_input)?,
             )?,
         };

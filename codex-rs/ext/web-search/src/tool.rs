@@ -102,6 +102,19 @@ impl WebSearchTool {
     ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
         let commands = parse_commands(call.function_arguments()?, self.supports_literature_search)?;
         let command_action = command_action(&commands);
+        call.turn_item_emitter
+            .emit_started(extension_turn_item(
+                WebSearchItem {
+                    id: call.call_id.clone(),
+                    query: String::new(),
+                    action: None,
+                    results: None,
+                },
+                EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                    call_id: call.call_id.clone(),
+                }),
+            ))
+            .await;
         let (provider, auth) = self
             .provider
             .api_provider_and_auth()
@@ -129,19 +142,6 @@ impl WebSearchTool {
             self.originator.as_deref(),
             call.codex_turn_metadata.as_deref(),
         );
-        call.turn_item_emitter
-            .emit_started(extension_turn_item(
-                WebSearchItem {
-                    id: call.call_id.clone(),
-                    query: String::new(),
-                    action: None,
-                    results: None,
-                },
-                EventMsg::WebSearchBegin(WebSearchBeginEvent {
-                    call_id: call.call_id.clone(),
-                }),
-            ))
-            .await;
         let response = client
             .search(&request, extra_headers)
             .await
