@@ -196,6 +196,15 @@ fn map_api_error_details(err: ApiError) -> CodexErr {
                 } else if status == http::StatusCode::INTERNAL_SERVER_ERROR {
                     CodexErr::InternalServerError
                 } else if status == http::StatusCode::TOO_MANY_REQUESTS {
+                    if headers
+                        .as_ref()
+                        .and_then(|headers| headers.get("x-ratelimit-exceeded"))
+                        .is_some_and(|value| value == "quota_exceeded")
+                        || body_text.trim() == "quota exceeded"
+                    {
+                        return CodexErr::QuotaExceeded;
+                    }
+
                     if let Ok(err) = serde_json::from_str::<UsageErrorResponse>(&body_text) {
                         if err.error.error_type.as_deref() == Some("usage_limit_reached") {
                             let limit_id = extract_header(headers.as_ref(), ACTIVE_LIMIT_HEADER);

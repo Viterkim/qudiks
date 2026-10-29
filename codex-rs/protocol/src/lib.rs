@@ -1,4 +1,9 @@
 pub mod account;
+
+/// Upstream client protocol supported by this fork. Keep in sync when rebasing:
+/// the Codex backend gates model access on this, independently of Qudiks releases.
+pub const CODEX_COMPATIBILITY_VERSION: &str = "0.165.0";
+
 mod agent_path;
 pub mod auth;
 mod response_item_id;

@@ -1,6 +1,7 @@
 use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
+use crate::endpoint::chat_completions;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -26,6 +27,7 @@ use tracing::instrument;
 pub struct ResponsesClient<T: HttpTransport> {
     session: EndpointSession<T>,
     sse_telemetry: Option<Arc<dyn SseTelemetry>>,
+    chat_completions: bool,
 }
 
 #[derive(Default)]
@@ -43,7 +45,13 @@ impl<T: HttpTransport> ResponsesClient<T> {
         Self {
             session: EndpointSession::new(transport, provider, auth),
             sse_telemetry: None,
+            chat_completions: false,
         }
+    }
+
+    pub fn with_chat_completions(mut self) -> Self {
+        self.chat_completions = true;
+        self
     }
 
     pub fn with_telemetry(
@@ -54,6 +62,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         Self {
             session: self.session.with_request_telemetry(request),
             sse_telemetry: sse,
+            chat_completions: self.chat_completions,
         }
     }
 
@@ -80,9 +89,6 @@ impl<T: HttpTransport> ResponsesClient<T> {
             compression,
             turn_state,
         } = options;
-        let body = EncodedJsonBody::encode(&request)
-            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-
         let mut headers = extra_headers;
         if let Some(ref thread_id) = thread_id {
             insert_header(&mut headers, "x-client-request-id", thread_id);
@@ -92,6 +98,26 @@ impl<T: HttpTransport> ResponsesClient<T> {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }
 
+        if self.chat_completions
+            || chat_completions::enabled(&self.session.provider().name, &request.model)
+        {
+            let mut request = serde_json::to_value(request).map_err(|error| {
+                ApiError::Stream(format!("encoding Chat Completions request: {error}"))
+            })?;
+            if self.chat_completions {
+                request["reasoning"] = Value::Null;
+            }
+            return chat_completions::stream(
+                &self.session,
+                request,
+                headers,
+                self.sse_telemetry.clone(),
+            )
+            .await;
+        }
+
+        let body = EncodedJsonBody::encode(&request)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
         self.stream_encoded(body, headers, compression, turn_state)
             .await
     }
@@ -109,11 +135,28 @@ impl<T: HttpTransport> ResponsesClient<T> {
     )]
     pub async fn stream(
         &self,
-        body: Value,
+        mut body: Value,
         extra_headers: HeaderMap,
         compression: Compression,
         turn_state: Option<Arc<OnceLock<String>>>,
     ) -> Result<ResponseStream, ApiError> {
+        if self.chat_completions
+            || chat_completions::enabled(
+                &self.session.provider().name,
+                body["model"].as_str().unwrap_or(""),
+            )
+        {
+            if self.chat_completions {
+                body["reasoning"] = Value::Null;
+            }
+            return chat_completions::stream(
+                &self.session,
+                body,
+                extra_headers,
+                self.sse_telemetry.clone(),
+            )
+            .await;
+        }
         let body = EncodedJsonBody::encode(&body)
             .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
         self.stream_encoded(body, extra_headers, compression, turn_state)

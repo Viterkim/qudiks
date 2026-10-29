@@ -10,14 +10,21 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
+use codex_cli::GithubCopilotLoginArgs;
 use codex_cli::cloud_config;
 use codex_cli::read_access_token_from_stdin;
 use codex_cli::read_api_key_from_stdin;
+use codex_cli::run_github_copilot_logout;
+use codex_cli::run_github_copilot_models;
+use codex_cli::run_github_copilot_setup;
+use codex_cli::run_github_copilot_status;
+use codex_cli::run_github_copilot_token;
 use codex_cli::run_login_status;
 use codex_cli::run_login_with_access_token;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_browser;
 use codex_cli::run_login_with_device_code;
+use codex_cli::run_login_with_github_copilot;
 use codex_cli::run_logout;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
@@ -71,6 +78,7 @@ mod mcp_login;
 mod migrate_nfs_db;
 mod migrate_rollouts;
 mod plugin_cmd;
+mod provider_mode;
 mod queue_cmd;
 mod remote_control_cmd;
 #[cfg(target_os = "windows")]
@@ -88,6 +96,7 @@ use crate::remote_control_cmd::RemoteControlCommand;
 use codex_exec_server_cli::ExecServerCommand;
 use doctor::DoctorCommand;
 use state_db_recovery as local_state_db;
+mod qudiks_update;
 
 use codex_config::LoaderOverrides;
 use codex_core::build_models_manager;
@@ -120,9 +129,9 @@ use codex_terminal_detection::TerminalName;
     subcommand_negates_reqs = true,
     // The executable is sometimes invoked via a platform‑specific name like
     // `codex-x86_64-unknown-linux-musl`, but the help output should always use
-    // the generic `codex` command name that users run.
-    bin_name = "codex",
-    override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
+    // the generic `qudiks` command name that users run.
+    bin_name = "qudiks",
+    override_usage = "qudiks [OPTIONS] [PROMPT]\n       qudiks [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
     #[clap(flatten)]
@@ -130,6 +139,9 @@ struct MultitoolCli {
 
     #[clap(flatten)]
     pub feature_toggles: FeatureToggles,
+
+    #[clap(flatten)]
+    provider_mode: provider_mode::ProviderMode,
 
     #[clap(flatten)]
     remote: InteractiveRemoteOptions,
@@ -560,6 +572,74 @@ struct LoginCommand {
 enum LoginSubcommand {
     /// Show login status.
     Status,
+
+    /// Sign in to GitHub Copilot with the GitHub device flow.
+    #[clap(name = "github-copilot")]
+    GithubCopilot(GithubCopilotLoginCommand),
+}
+
+#[derive(Debug, Parser)]
+struct GithubCopilotLoginCommand {
+    /// GitHub domain to authenticate against (for GitHub Enterprise).
+    #[arg(long = "domain", value_name = "DOMAIN", default_value = codex_login::github_copilot::DEFAULT_GITHUB_DOMAIN)]
+    domain: String,
+
+    /// Write a profile instead of the base config; select it with `-p <name>`.
+    #[arg(long = "profile", value_name = "NAME")]
+    profile: Option<ProfileV2Name>,
+
+    /// Model to use instead of the best one the account offers.
+    #[arg(long = "model", short = 'm', value_name = "MODEL")]
+    model: Option<String>,
+
+    /// Override the Copilot editor OAuth client id (advanced).
+    #[arg(long = "client-id", value_name = "CLIENT_ID", hide = true)]
+    client_id: Option<String>,
+
+    #[command(subcommand)]
+    action: Option<GithubCopilotSubcommand>,
+}
+
+impl GithubCopilotLoginCommand {
+    fn login_args(self) -> GithubCopilotLoginArgs {
+        GithubCopilotLoginArgs {
+            domain: self.domain,
+            client_id: self.client_id,
+            profile: self.profile,
+            model: self.model,
+        }
+    }
+}
+
+/// Options accepted after `setup`, so both flag orderings work.
+#[derive(Debug, Parser)]
+struct GithubCopilotSetupCommand {
+    /// Profile to write; overrides the value given before the subcommand.
+    #[arg(long = "profile", value_name = "NAME")]
+    profile: Option<ProfileV2Name>,
+
+    /// Model to use instead of the best one the account offers.
+    #[arg(long = "model", short = 'm', value_name = "MODEL")]
+    model: Option<String>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum GithubCopilotSubcommand {
+    /// Rewrite the Copilot profile from stored credentials.
+    Setup(GithubCopilotSetupCommand),
+
+    /// List the models this account can use.
+    Models,
+
+    /// Show stored GitHub Copilot credential status.
+    Status,
+
+    /// Remove stored GitHub Copilot credentials.
+    Logout,
+
+    /// Print a short-lived Copilot bearer token; used by provider auth.
+    #[clap(hide = true)]
+    Token,
 }
 
 #[derive(Debug, Parser)]
@@ -795,6 +875,9 @@ fn run_update_action(
     action: UpdateAction,
     cli_executable: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
+    if action == UpdateAction::QudiksBinary {
+        return qudiks_update::run();
+    }
     if let UpdateAction::Daemon(source) = action {
         let executable = cli_executable
             .ok_or_else(|| anyhow::anyhow!("Cannot locate the launching Codex CLI"))?;
@@ -876,6 +959,12 @@ fn resolve_windows_update_command_from_path(
 }
 
 fn run_update_command() -> anyhow::Result<()> {
+    if std::env::current_exe()?
+        .file_name()
+        .is_some_and(|name| name == "qudiks-bin")
+    {
+        return qudiks_update::run();
+    }
     #[cfg(debug_assertions)]
     {
         anyhow::bail!(
@@ -1051,6 +1140,7 @@ async fn dispatch_cli(
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
         feature_toggles,
+        provider_mode,
         remote,
         mut interactive,
         subcommand,
@@ -1068,6 +1158,43 @@ async fn dispatch_cli(
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
+    if provider_mode.selected() {
+        let session_remote = match &subcommand {
+            Some(Subcommand::Resume(command)) => Some(&command.remote),
+            Some(Subcommand::Fork(command)) => Some(&command.remote),
+            _ => None,
+        };
+        anyhow::ensure!(
+            remote.remote.is_none()
+                && remote.remote_auth_token_env.is_none()
+                && session_remote.is_none_or(
+                    |remote| remote.remote.is_none() && remote.remote_auth_token_env.is_none()
+                ),
+            "Provider flags cannot be combined with --remote"
+        );
+        let runtime = match &subcommand {
+            None => &*interactive.shared,
+            Some(Subcommand::Resume(command)) => &*command.config_overrides.0.shared,
+            Some(Subcommand::Fork(command)) => &*command.config_overrides.0.shared,
+            Some(Subcommand::Exec(command)) => &*command.shared,
+            _ => anyhow::bail!(
+                "Provider flags support qudiks, qudiks resume, qudiks fork, and qudiks exec."
+            ),
+        };
+        anyhow::ensure!(
+            !runtime.oss && !interactive.oss,
+            "Provider flags cannot be combined with --oss"
+        );
+        let profile = runtime
+            .config_profile_v2
+            .as_ref()
+            .or(interactive.config_profile_v2.as_ref());
+        let cwd = runtime.cwd.as_deref().or(interactive.cwd.as_deref());
+        provider_mode
+            .prepare(&mut root_config_overrides, profile, cwd)
+            .await?;
+        interactive.no_daemon = true;
+    }
     let agents_options = match &subcommand {
         Some(Subcommand::Agents(options)) => Some(options),
         _ => None,
@@ -1650,6 +1777,43 @@ async fn dispatch_cli(
                 Some(LoginSubcommand::Status) => {
                     run_login_status(login_cli.config_overrides).await;
                 }
+                Some(LoginSubcommand::GithubCopilot(copilot_cli)) => match copilot_cli.action {
+                    Some(GithubCopilotSubcommand::Setup(ref setup_cli)) => {
+                        let profile = setup_cli.profile.clone();
+                        let model = setup_cli.model.clone();
+                        let mut args = copilot_cli.login_args();
+                        if profile.is_some() {
+                            args.profile = profile;
+                        }
+                        if model.is_some() {
+                            args.model = model;
+                        }
+                        run_github_copilot_setup(login_cli.config_overrides, args).await;
+                    }
+                    Some(GithubCopilotSubcommand::Models) => {
+                        run_github_copilot_models(login_cli.config_overrides).await;
+                    }
+                    Some(GithubCopilotSubcommand::Status) => {
+                        run_github_copilot_status(
+                            login_cli.config_overrides,
+                            copilot_cli.profile.as_ref(),
+                        )
+                        .await;
+                    }
+                    Some(GithubCopilotSubcommand::Logout) => {
+                        run_github_copilot_logout(login_cli.config_overrides).await;
+                    }
+                    Some(GithubCopilotSubcommand::Token) => {
+                        run_github_copilot_token(login_cli.config_overrides).await;
+                    }
+                    None => {
+                        run_login_with_github_copilot(
+                            login_cli.config_overrides,
+                            copilot_cli.login_args(),
+                        )
+                        .await;
+                    }
+                },
                 None => {
                     if login_cli.with_api_key && login_cli.with_access_token {
                         eprintln!(
@@ -1976,7 +2140,7 @@ fn profile_v2_for_subcommand<'a>(
             subcommand: DebugSubcommand::PromptInput(_),
         }) => Ok(Some(profile_v2)),
         _ => anyhow::bail!(
-            "--profile only applies to runtime commands, `codex mcp`, and `codex migrate-nfs-db`: `codex`, `codex exec`, `codex review`, `codex resume`, `codex queue`, `codex archive`, `codex delete`, `codex unarchive`, `codex fork`, `codex mcp`, `codex migrate-nfs-db`, `codex sandbox`, and `codex debug prompt-input`."
+            "--profile only applies to runtime commands, `qudiks mcp`, and `qudiks migrate-nfs-db`: `qudiks`, `qudiks exec`, `qudiks review`, `qudiks resume`, `qudiks queue`, `qudiks archive`, `qudiks delete`, `qudiks unarchive`, `qudiks fork`, `qudiks mcp`, `qudiks migrate-nfs-db`, `qudiks sandbox`, and `qudiks debug prompt-input`."
         ),
     }
 }
@@ -2930,6 +3094,7 @@ enabled = true
             config_overrides: mut root_overrides,
             subcommand,
             feature_toggles: _,
+            provider_mode: _,
             remote: _,
         } = cli;
         interactive
@@ -2967,6 +3132,7 @@ enabled = true
             config_overrides: mut root_overrides,
             subcommand,
             feature_toggles: _,
+            provider_mode: _,
             remote: _,
         } = cli;
         interactive
@@ -3011,6 +3177,7 @@ enabled = true
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            provider_mode: _,
             remote: _,
         } = cli;
 

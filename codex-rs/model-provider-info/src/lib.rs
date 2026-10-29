@@ -12,6 +12,7 @@ use codex_client::OPENAI_ORGANIZATION_HEADER;
 use codex_client::OPENAI_PROJECT_HEADER;
 use codex_client::Provider as ApiProvider;
 use codex_client::RetryConfig as ApiRetryConfig;
+use codex_protocol::CODEX_COMPATIBILITY_VERSION;
 use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_protocol::error::CodexErr;
@@ -117,12 +118,15 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    #[serde(rename = "chat_completions")]
+    ChatCompletions,
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::ChatCompletions => "chat_completions",
         };
         f.write_str(value)
     }
@@ -136,8 +140,12 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
+            "chat_completions" => Ok(Self::ChatCompletions),
             "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["responses", "chat_completions"],
+            )),
         }
     }
 }
@@ -579,7 +587,7 @@ other non-default provider fields are not supported"
             wire_api: WireApi::Responses,
             query_params: None,
             http_headers: Some(
-                [("version".to_string(), env!("CARGO_PKG_VERSION").into())]
+                [("version".to_string(), CODEX_COMPATIBILITY_VERSION.into())]
                     .into_iter()
                     .collect(),
             ),

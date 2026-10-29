@@ -405,8 +405,13 @@ pub struct ConfigToml {
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
     pub model_verbosity: Option<Verbosity>,
 
-    /// Optional path to a JSON model catalog (applied on startup only).
+    /// Optional path to a JSON model catalog (applied on startup only). Set false to use provider discovery.
     /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
+    #[serde(
+        default,
+        deserialize_with = "crate::model_catalog_setting::deserialize"
+    )]
+    #[schemars(schema_with = "crate::model_catalog_setting::schema")]
     pub model_catalog_json: Option<AbsolutePathBuf>,
 
     /// Deprecated: `friendly` and `pragmatic` no longer select a style.
