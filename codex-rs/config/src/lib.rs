@@ -30,6 +30,7 @@ pub use mcp_ema_cancellation::McpEmaCancellation;
 mod mcp_requirements;
 mod mcp_types;
 mod merge;
+mod model_catalog_setting;
 mod model_provider_defaults;
 mod model_provider_requirements;
 mod overrides;

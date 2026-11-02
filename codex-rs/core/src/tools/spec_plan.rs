@@ -13,7 +13,9 @@ use crate::tools::handlers::CurrentTimeHandler;
 use crate::tools::handlers::DynamicToolHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
+use crate::tools::handlers::ExecCommandToolKind;
 use crate::tools::handlers::GetContextRemainingHandler;
+use crate::tools::handlers::GrokWriteBashHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
@@ -66,6 +68,8 @@ use codex_features::Feature;
 use codex_features::SleepToolMode;
 use codex_login::AuthManager;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME;
+use codex_model_provider_info::WireApi;
 use codex_prompts::ResolvedModelMessages;
 use codex_protocol::DEFAULT_FUNCTION_NAMESPACE;
 use codex_protocol::account::PlanType;
@@ -155,7 +159,7 @@ pub(crate) fn build_tool_router(
         &turn_context.config,
         apps_enabled,
         &mcp.config().mcp_server_catalog,
-        model_info.supports_search_tool,
+        search_tool_enabled(turn_context, model_info),
         session.services.mcp_manager.shared_definitions(),
         &mut registry,
     );
@@ -265,7 +269,7 @@ fn apply_mcp_tool_exposure_policy(
             exposures = exposures.difference(ToolExposures::DEFERRED | ToolExposures::CODE_MODE);
         }
 
-        exposures = if model_info.supports_search_tool
+        exposures = if search_tool_enabled(turn_context, model_info)
             && exposures.contains(ToolExposures::DEFERRED)
             && (effective_tool_mode(turn_context, model_info) != ToolMode::CodeModeOnly
                 || exposures.contains(ToolExposures::CODE_MODE))
@@ -392,7 +396,7 @@ pub(crate) fn finalize_tool_router(
         }
     }
     let tool_search_name = ToolName::plain(TOOL_SEARCH_TOOL_NAME);
-    let search_exposure = if model_info.supports_search_tool
+    let search_exposure = if search_tool_enabled(turn_context, model_info)
         && registry.tool_policy.allows(&tool_search_name)
         && registry.entries().any(|tool| {
             tool.runtime.tool_name() != tool_search_name
@@ -659,6 +663,12 @@ fn build_model_visible_specs(
         .map(|(_, namespace)| namespace)
         .collect();
     merge_into_namespaces(specs, &mcp_namespaces)
+        .into_iter()
+        .filter(|spec| {
+            namespace_tools_enabled(turn_context, model_info)
+                || !matches!(spec, ToolSpec::Namespace(_))
+        })
+        .collect()
 }
 
 fn spec_for_model_request(
@@ -696,13 +706,23 @@ fn hosted_model_tool_specs(
     registered_extension_tool_names: &[ToolName],
 ) -> Vec<ToolSpec> {
     // Responses Lite accepts schemas for client-executed tools, not hosted Responses tools.
-    if model_info.use_responses_lite {
+    if model_info.use_responses_lite
+        || turn_context.provider.info().wire_api == WireApi::ChatCompletions
+        || (turn_context.provider.info().name == GITHUB_COPILOT_PROVIDER_NAME
+            && (model_info.slug.starts_with("kimi-")
+                || matches!(
+                    model_info.slug.as_str(),
+                    "claude-sonnet-5.5" | "claude-opus-5.5"
+                )))
+    {
         return Vec::new();
     }
 
     let mut specs = Vec::new();
     let standalone_web_search_available = standalone_web_search_enabled(turn_context, model_info)
-        && registered_extension_tool_names.contains(&ToolName::namespaced("web", "run"));
+        && registered_extension_tool_names.iter().any(|tool_name| {
+            standalone_web_tool_matches_model(tool_name, turn_context, model_info)
+        });
     // `Some(Cached/Live/Disabled)` are the options for mode when standalone search is unavailable
     // and the provider supports hosted search. `None` prevents emitting a hosted search tool.
     let web_search_mode = (!standalone_web_search_available
@@ -721,11 +741,19 @@ fn hosted_model_tool_specs(
     specs
 }
 
+pub(crate) fn search_tool_enabled(turn_context: &TurnContext, model_info: &ModelInfo) -> bool {
+    model_info.supports_search_tool && namespace_tools_enabled(turn_context, model_info)
+}
+
 pub(crate) fn tool_suggest_enabled(turn_context: &TurnContext) -> bool {
     let features = turn_context.config.features.get();
     features.enabled(Feature::ToolSuggest)
         && features.enabled(Feature::Apps)
         && features.enabled(Feature::Plugins)
+}
+
+fn namespace_tools_enabled(turn_context: &TurnContext, model_info: &ModelInfo) -> bool {
+    turn_context.provider.supports_namespace_tools(model_info)
 }
 
 fn multi_agent_v2_enabled(turn_context: &TurnContext) -> bool {
@@ -762,7 +790,9 @@ fn required_child_management_tool_names(
             &["send_input", "wait_agent", "resume_agent", "close_agent"],
         ),
         MultiAgentVersion::V2 => (
-            turn_context.config.multi_agent_v2.tool_namespace.as_deref(),
+            namespace_tools_enabled(turn_context, model_info)
+                .then_some(turn_context.config.multi_agent_v2.tool_namespace.as_deref())
+                .flatten(),
             if turn_context.config.multi_agent_v2.disable_direct_message {
                 &["interrupt_agent", "list_agents"]
             } else {
@@ -1032,7 +1062,7 @@ fn register_code_mode_executors(
     let mut exec_prompt_tool_specs = Vec::new();
     let mut deferred_exec_prompt_tool_specs = Vec::new();
     let mut included_deferred_mcp_output_schema = false;
-    let deferred_tools_guidance_enabled = model_info.supports_search_tool;
+    let deferred_tools_guidance_enabled = search_tool_enabled(turn_context, model_info);
     for (name, spec, tool) in code_mode_tools(turn_context, model_info, registry) {
         code_mode_tool_names.insert(name, tool.runtime.tool_name());
         let exposure = tool.exposure;
@@ -1207,13 +1237,33 @@ fn add_core_tool_sources(context: &CoreToolPlanContext<'_>, registry: &mut ToolR
 }
 
 fn standalone_web_search_enabled(turn_context: &TurnContext, model_info: &ModelInfo) -> bool {
-    turn_context.provider.capabilities().web_search
+    (namespace_tools_enabled(turn_context, model_info)
+        || turn_context.provider.info().supports_standalone_web_search)
+        && turn_context.provider.capabilities().web_search
         && (model_info.use_responses_lite
+            || turn_context.provider.info().supports_standalone_web_search
             || turn_context
                 .config
                 .features
                 .get()
                 .enabled(Feature::StandaloneWebSearch))
+}
+
+fn is_copilot_grok(turn_context: &TurnContext, model_info: &ModelInfo) -> bool {
+    turn_context.provider.info().name == GITHUB_COPILOT_PROVIDER_NAME
+        && model_info.slug.starts_with("grok")
+}
+
+fn standalone_web_tool_matches_model(
+    tool_name: &ToolName,
+    turn_context: &TurnContext,
+    model_info: &ModelInfo,
+) -> bool {
+    if is_copilot_grok(turn_context, model_info) {
+        tool_name == &ToolName::plain("web_search") || tool_name == &ToolName::plain("browse_page")
+    } else {
+        tool_name == &ToolName::namespaced("web", "run")
+    }
 }
 
 fn tool_environment_mode(environments: &TurnEnvironmentSnapshot) -> ToolEnvironmentMode {
@@ -1257,20 +1307,54 @@ fn add_shell_tools(context: &CoreToolPlanContext<'_>, registry: &mut ToolRegistr
     let exec_permission_approvals_enabled = features.enabled(Feature::ExecPermissionApprovals)
         && context.tool_policy.expose_additional_permissions;
     let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
+    let grok_compat = is_copilot_grok(turn_context, context.model_info) && !cfg!(windows);
     let options = ExecCommandHandlerOptions {
         allow_tty: features.enabled(Feature::UnifiedExecTty),
         exec_permission_approvals_enabled,
         include_environment_id,
         include_windows_shell_guidance: should_include_windows_shell_guidance(context.environments),
+        tool_kind: ExecCommandToolKind::Codex,
     };
     if features.enabled(Feature::UnifiedExec) {
-        registry.add(ExecCommandHandler::new(options));
-        registry.add(WriteStdinHandler);
+        if grok_compat {
+            registry.add(ExecCommandHandler::new(ExecCommandHandlerOptions {
+                tool_kind: ExecCommandToolKind::GrokBash,
+                ..options
+            }));
+            registry.add(GrokWriteBashHandler);
+            for tool_kind in [
+                ExecCommandToolKind::GrokReadFile,
+                ExecCommandToolKind::GrokEditFile,
+                ExecCommandToolKind::GrokWriteFile,
+            ] {
+                registry.add(ExecCommandHandler::one_shot(ExecCommandHandlerOptions {
+                    tool_kind,
+                    ..options
+                }));
+            }
+        } else {
+            registry.add(ExecCommandHandler::new(options));
+            registry.add(WriteStdinHandler);
+        }
     } else {
         // Managed requirements are the only configuration path that can keep
         // unified exec disabled. Preserve command execution without exposing a
         // resumable process or write_stdin authority prohibited by policy.
-        registry.add(ExecCommandHandler::one_shot(options));
+        if grok_compat {
+            for tool_kind in [
+                ExecCommandToolKind::GrokBash,
+                ExecCommandToolKind::GrokReadFile,
+                ExecCommandToolKind::GrokEditFile,
+                ExecCommandToolKind::GrokWriteFile,
+            ] {
+                registry.add(ExecCommandHandler::one_shot(ExecCommandHandlerOptions {
+                    tool_kind,
+                    ..options
+                }));
+            }
+        } else {
+            registry.add(ExecCommandHandler::one_shot(options));
+        }
     }
 }
 
@@ -1424,9 +1508,9 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         ));
     }
 
-    if context.model_info.apply_patch_tool_type.is_some() {
+    if let Some(tool_type) = context.model_info.apply_patch_tool_type.clone() {
         let include_environment_id = matches!(environment_mode, ToolEnvironmentMode::Multiple);
-        registry.add(ApplyPatchHandler::new(include_environment_id));
+        registry.add(ApplyPatchHandler::new(tool_type, include_environment_id));
     }
 
     if context
@@ -1466,7 +1550,9 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
             } else {
                 ToolExposure::Direct
             };
-            let tool_namespace = turn_context.config.multi_agent_v2.tool_namespace.as_deref();
+            let tool_namespace = namespace_tools_enabled(turn_context, context.model_info)
+                .then_some(turn_context.config.multi_agent_v2.tool_namespace.as_deref())
+                .flatten();
             let native_review = if turn_context
                 .config
                 .features
@@ -1569,7 +1655,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
         } else {
             let agent_type_description =
                 agent_type_description(turn_context, context.default_agent_type_description);
-            let exposure = if context.model_info.supports_search_tool {
+            let exposure = if search_tool_enabled(turn_context, context.model_info) {
                 ToolExposure::Deferred
             } else {
                 ToolExposure::Direct
@@ -1664,7 +1750,14 @@ fn append_extension_tool_executors(
 
     for executor in executors {
         let tool_name = executor.tool_name();
-        let is_standalone_web_search = tool_name == ToolName::namespaced("web", "run");
+        let is_any_standalone_web_search = tool_name == ToolName::namespaced("web", "run")
+            || tool_name == ToolName::plain("web_search")
+            || tool_name == ToolName::plain("browse_page");
+        let is_standalone_web_search =
+            standalone_web_tool_matches_model(&tool_name, turn_context, model_info);
+        if is_any_standalone_web_search && !is_standalone_web_search {
+            continue;
+        }
         if is_standalone_web_search && (!standalone_web_search_enabled || !web_search_mode_on) {
             continue;
         }

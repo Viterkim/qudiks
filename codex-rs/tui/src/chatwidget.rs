@@ -256,6 +256,7 @@ use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod activity_groups;
 mod activity_presentation;
+mod api_usage;
 mod command_lifecycle;
 mod config_panel;
 mod connector_mentions;
@@ -309,6 +310,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 pub(crate) use interaction::KeyEventAction;
+mod qudiks_update;
 mod skills;
 mod slash_command_args;
 mod slash_dispatch;
@@ -469,7 +471,12 @@ const ASK_FOR_APPROVAL_LABEL: &str = "Ask for approval";
 const APPROVE_FOR_ME_LABEL: &str = "Approve for me";
 const AUTO_REVIEW_DESCRIPTION: &str = "Only ask for actions detected as potentially unsafe";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-dir", "thread-name"];
+const DEFAULT_STATUS_LINE_ITEMS: [&str; 4] = [
+    "model-with-reasoning",
+    "current-dir",
+    "provider",
+    "thread-name",
+];
 
 /// Common initialization parameters shared by all `ChatWidget` constructors.
 pub(crate) struct ChatWidgetInit {
@@ -2115,6 +2122,9 @@ impl Drop for ChatWidget {
     }
 }
 
+#[cfg(not(test))]
+const PLACEHOLDER: &str = "Qudiks siger spurgt?";
+#[cfg(test)]
 const PLACEHOLDER: &str = "Ask Codex to do anything";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 
