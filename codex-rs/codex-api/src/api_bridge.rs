@@ -4,6 +4,7 @@ use crate::error::parse_terminal_provider_error;
 use crate::rate_limits::parse_promo_message;
 use crate::rate_limits::parse_rate_limit_for_limit;
 use crate::rate_limits::parse_rate_limit_reached_type;
+use crate::rate_limits::retry_after_from_message;
 use base64::Engine;
 use chrono::DateTime;
 use chrono::Utc;
@@ -46,6 +47,10 @@ pub fn map_api_error(err: ApiError) -> CodexErr {
         | ApiError::MisalignmentPolicyViolation { .. } => None,
     };
     let error = map_api_error_details(err);
+    let retry_after = retry_after.or_else(|| match error.details() {
+        CodexErrorDetails::RateLimitExceeded(message) => retry_after_from_message(message),
+        _ => None,
+    });
     match retry_after {
         Some(retry_after) => error.with_retry_after(retry_after),
         None => error,
@@ -206,6 +211,15 @@ fn map_api_error_details(err: ApiError) -> CodexErr {
                 } else if status == http::StatusCode::INTERNAL_SERVER_ERROR {
                     CodexErr::InternalServerError
                 } else if status == http::StatusCode::TOO_MANY_REQUESTS {
+                    if headers
+                        .as_ref()
+                        .and_then(|headers| headers.get("x-ratelimit-exceeded"))
+                        .is_some_and(|value| value == "quota_exceeded")
+                        || body_text.trim() == "quota exceeded"
+                    {
+                        return CodexErr::QuotaExceeded;
+                    }
+
                     if let Ok(err) = serde_json::from_str::<UsageErrorResponse>(&body_text) {
                         if err.error.error_type.as_deref() == Some("usage_limit_reached") {
                             let limit_id = extract_header(headers.as_ref(), ACTIVE_LIMIT_HEADER);
@@ -254,6 +268,22 @@ fn map_api_error_details(err: ApiError) -> CodexErr {
                         {
                             return CodexErr::QuotaExceeded;
                         }
+                    }
+
+                    if let Some(error) = provider_error
+                        && (matches!(
+                            error.get("code").and_then(Value::as_str),
+                            Some("rate_limit_exceeded" | "slow_down")
+                        ) || error.get("type").and_then(Value::as_str)
+                            == Some("rate_limit_error"))
+                    {
+                        return CodexErr::new(CodexErrorDetails::RateLimitExceeded(
+                            error
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Too many requests.")
+                                .to_owned(),
+                        ));
                     }
 
                     CodexErr::RetryLimit(RetryLimitReachedError {

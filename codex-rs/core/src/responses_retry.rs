@@ -1,6 +1,6 @@
 //! Shared retry and transport fallback decisions for Responses requests.
 //! Content-filter guidance is recorded for sampling requests before retry decisions.
-//! Server advice controls timing without extending configured retry limits.
+//! Temporary rate limits wait independently of the connection retry budget.
 
 use std::time::Duration;
 
@@ -16,12 +16,15 @@ use codex_http_client::RetryAfter;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::CodexErrorDetails;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::StreamErrorEvent;
 use codex_protocol::protocol::WarningEvent;
 use tokio::time::Instant;
 use tracing::warn;
 
 const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(60);
+const INITIAL_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(1);
+const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResponsesStreamRequest {
@@ -33,6 +36,8 @@ pub(crate) struct ResponsesStreamRetryState {
     retries: u64,
     connection_retries: u64,
     connection_retry_delay: Duration,
+    rate_limit_retries: u64,
+    rate_limit_retry_delay: Duration,
 }
 
 impl Default for ResponsesStreamRetryState {
@@ -41,6 +46,8 @@ impl Default for ResponsesStreamRetryState {
             retries: 0,
             connection_retries: 0,
             connection_retry_delay: INITIAL_CONNECTION_RETRY_DELAY,
+            rate_limit_retries: 0,
+            rate_limit_retry_delay: INITIAL_RATE_LIMIT_RETRY_DELAY,
         }
     }
 }
@@ -52,8 +59,7 @@ pub(crate) struct ExhaustedResponseRetry {
     pub(crate) retry_at: Option<tokio::time::Instant>,
 }
 
-/// Returns `Ok(())` when the caller should retry the request loop, or the original error when
-/// it is terminal or the retry budget is exhausted.
+/// Returns `Ok(())` after waiting to retry, or the original error when retries stop.
 #[tracing::instrument(level = "trace", skip_all, fields(request = ?request))]
 pub(crate) async fn handle_response_stream_error(
     retry_state: &mut ResponsesStreamRetryState,
@@ -90,6 +96,32 @@ pub(crate) async fn handle_response_stream_error(
         return Err(err);
     };
     let retry_after = err.retry_after();
+
+    if max_retries > 0
+        && matches!(request, ResponsesStreamRequest::Sampling)
+        && matches!(err.details(), CodexErrorDetails::RateLimitExceeded(_))
+        && !turn_context.session_source.is_internal()
+    {
+        let delay = delay.max(retry_state.rate_limit_retry_delay);
+        let retry_at = Instant::now() + delay;
+        retry_state.rate_limit_retries = retry_state.rate_limit_retries.saturating_add(1);
+        codex_client::record_retry!(retry_state.rate_limit_retries, delay, operation);
+        sess.send_event(
+            turn_context,
+            EventMsg::StreamError(StreamErrorEvent {
+                message: format!("Rate limited. Retrying in {:.1}s...", delay.as_secs_f64()),
+                codex_error_info: Some(err.to_codex_protocol_error()),
+                additional_details: Some(err.to_string()),
+            }),
+        )
+        .await;
+        tokio::time::sleep_until(retry_at).await;
+        retry_state.rate_limit_retry_delay = retry_state
+            .rate_limit_retry_delay
+            .saturating_mul(2)
+            .min(MAX_RATE_LIMIT_RETRY_DELAY);
+        return Ok(());
+    }
 
     if turn_context
         .config

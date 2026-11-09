@@ -1,3 +1,4 @@
+mod chat_completions;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;

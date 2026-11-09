@@ -1,3 +1,4 @@
+use codex_http_client::RetryAfter;
 use codex_protocol::account::PlanType;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitReachedType;
@@ -7,6 +8,27 @@ use http::HeaderMap;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+pub(crate) fn retry_after_from_message(message: &str) -> Option<RetryAfter> {
+    static PATTERN: OnceLock<Option<regex_lite::Regex>> = OnceLock::new();
+    let pattern = PATTERN
+        .get_or_init(|| {
+            regex_lite::Regex::new(r"(?i)try again in\s*(\d+(?:\.\d+)?)\s*(ms|s(?:econds?)?)\b")
+                .ok()
+        })
+        .as_ref()?;
+    let captures = pattern.captures(message)?;
+    let value = captures.get(1)?.as_str().parse::<f64>().ok()?;
+    let seconds = if captures.get(2)?.as_str().eq_ignore_ascii_case("ms") {
+        value / 1000.0
+    } else {
+        value
+    };
+
+    RetryAfter::from_delay(Duration::try_from_secs_f64(seconds).ok()?)
+}
 
 #[derive(Debug)]
 pub struct RateLimitError {
