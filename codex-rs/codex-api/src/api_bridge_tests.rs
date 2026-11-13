@@ -113,6 +113,28 @@ async fn map_api_error_preserves_retry_delay() {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn http_rate_limit_uses_message_delay() {
+    let error = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: None,
+        headers: None,
+        body: Some(
+            serde_json::json!({"error": {
+                "code": "rate_limit_exceeded",
+                "message": "Please try again in 1.206s."
+            }})
+            .to_string(),
+        ),
+        retry_after: None,
+    }));
+
+    assert_eq!(
+        error.server_retry_delay(),
+        Some(std::time::Duration::from_millis(1206)),
+    );
+}
+
 /// Mapping a new error category preserves elapsed advice without making hard failures retryable.
 #[tokio::test(start_paused = true)]
 async fn http_retry_deadline_survives_mapping_and_respects_terminal_errors() {
@@ -152,11 +174,9 @@ async fn http_retry_deadline_survives_mapping_and_respects_terminal_errors() {
                     error.to_string()
                 ),
                 (
-                    CodexErrorInfo::ResponseTooManyFailedAttempts {
-                        http_status_code: Some(429),
-                    },
-                    Some(429),
-                    "exceeded retry limit, last status: 429 Too Many Requests".to_string(),
+                    CodexErrorInfo::RateLimitExceeded,
+                    None,
+                    "rate limit exceeded: sensitive upstream detail".to_string(),
                 ),
             );
         }
@@ -595,9 +615,7 @@ fn map_api_error_distinguishes_http_quota_errors_from_rate_limits() {
         serde_json::json!({"type": "rate_limit_error", "code": "slow_down"}),
     ] {
         let expected = if error["type"] == "rate_limit_error" {
-            CodexErrorInfo::ResponseTooManyFailedAttempts {
-                http_status_code: Some(429),
-            }
+            CodexErrorInfo::RateLimitExceeded
         } else {
             CodexErrorInfo::UsageLimitExceeded
         };

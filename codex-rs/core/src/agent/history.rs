@@ -201,17 +201,23 @@ pub(super) async fn prepare_forked_history(
         }
     };
     let parent_history_mode = parent_thread.config_snapshot().await.history_mode;
-    // `record_conversation_items` only queues persistence writes asynchronously.
-    // Flush before snapshotting store history for a fork.
-    parent_thread.ensure_rollout_materialized().await;
-    parent_thread.flush_rollout().await?;
-
     let destination_history_mode = matches!(parent_history_mode, ThreadHistoryMode::Paginated)
         .then_some(ThreadHistoryMode::Paginated);
-    let mut forked_rollout_items =
+    let mut forked_rollout_items = if parent_thread.session.get_config().await.ephemeral {
+        // Ephemeral threads have no stored rollout, so reuse guardian's live snapshot of the
+        // context and baselines.
+        let mut items = parent_thread.session.guardian_fork_history().await;
+        items.retain(|item| !matches!(item, RolloutItem::EventMsg(EventMsg::TokenCount(_))));
+        items
+    } else {
+        // `record_conversation_items` only queues persistence writes asynchronously.
+        // Flush before snapshotting store history for a fork.
+        parent_thread.ensure_rollout_materialized().await;
+        parent_thread.flush_rollout().await?;
         load_agent_model_context(state, parent_thread_id, parent_history_mode)
             .await?
-            .items;
+            .items
+    };
 
     let multi_agent_v2_usage_hint_texts_to_filter: Vec<String> =
         if multi_agent_version == MultiAgentVersion::V2 {

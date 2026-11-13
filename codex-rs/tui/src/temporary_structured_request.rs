@@ -101,6 +101,8 @@ pub(crate) async fn start_temporary_thread(
         ("features.unified_exec".to_string(), false.into()),
         ("features.view_image".to_string(), false.into()),
         ("cloud.skills.enabled".to_string(), false.into()),
+        // Zero skips AGENTS.md, which was half of every title request in a big repo.
+        ("project_doc_max_bytes".to_string(), 0.into()),
         ("skills.include_instructions".to_string(), false.into()),
         (
             "tools.experimental_request_user_input.enabled".to_string(),

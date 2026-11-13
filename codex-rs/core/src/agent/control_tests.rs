@@ -4209,9 +4209,22 @@ async fn resume_and_cold_fork_restore_mcp_attribution_in_constructed_requests(
         .expect("shutdown resumed thread");
 }
 
+#[test_case::test_case(false, MultiAgentVersion::V1; "persisted_v1")]
+#[test_case::test_case(true, MultiAgentVersion::V1; "ephemeral_v1")]
+#[test_case::test_case(false, MultiAgentVersion::V2; "persisted_v2")]
+#[test_case::test_case(true, MultiAgentVersion::V2; "ephemeral_v2")]
 #[tokio::test]
-async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
-    let harness = AgentControlHarness::new().await;
+async fn spawn_agent_fork_inherits_live_history(ephemeral: bool, version: MultiAgentVersion) {
+    let (home, mut config) = test_config().await;
+    config.ephemeral = ephemeral;
+    match version {
+        MultiAgentVersion::V2 => config.features.enable(Feature::MultiAgentV2),
+        MultiAgentVersion::Disabled | MultiAgentVersion::V1 => {
+            config.features.disable(Feature::MultiAgentV2)
+        }
+    }
+    .expect("configure multi-agent version");
+    let harness = AgentControlHarness::new_with_config(home, config).await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
     let turn_context = parent_thread.session.new_default_turn().await;
     let parent_spawn_call_id = "spawn-call-unflushed".to_string();
@@ -4246,7 +4259,7 @@ async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
             },
         )
         .await
-        .expect("forked spawn should flush parent rollout before loading history")
+        .expect("forked spawn should inherit live parent history")
         .thread_id;
 
     let child_thread = harness
@@ -4257,7 +4270,7 @@ async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
     let history = child_thread.session.clone_history().await;
     assert!(
         history_contains_text(history.raw_items(), "unflushed final answer"),
-        "forked child history should include unflushed assistant final answers after flushing the parent rollout"
+        "forked child should inherit the latest assistant final answer"
     );
 
     let _ = harness

@@ -2596,6 +2596,50 @@ async fn code_mode_only_exposes_code_executor_and_hides_nested_tools() {
 }
 
 #[tokio::test]
+async fn copilot_defers_app_schemas() {
+    let mut browser = mcp_tool("codex_apps", "mcp__search_service", "web_run");
+    browser.connector_id = Some(codex_mcp::SEARCH_CONNECTOR.to_string());
+    let plan = probe_with(
+        |turn| {
+            set_features(turn, &[Feature::CodeMode, Feature::CodeModeOnly]);
+            update_turn_settings_for_test(turn, |settings| {
+                Arc::make_mut(&mut settings.model_info).supports_search_tool = false;
+            });
+
+            let provider = ModelProviderInfo {
+                name: codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME.to_string(),
+                ..turn.provider.info().clone()
+            };
+            turn.provider = create_model_provider(provider, turn.auth_manager.clone());
+        },
+        ToolPlanInputs {
+            tool_runtimes: vec![
+                mcp_runtime("app", "mcp__app", "lookup", ToolExposure::Direct),
+                RegisteredTool {
+                    runtime: Arc::new(McpHandler::new(browser).expect("browser spec builds")),
+                    exposure: ToolExposure::Direct,
+                    native_review: Default::default(),
+                    model_spec: None,
+                },
+            ],
+            ..ToolPlanInputs::default()
+        },
+    )
+    .await;
+
+    let ToolSpec::Freeform(exec) = plan.visible_spec(codex_code_mode::PUBLIC_TOOL_NAME) else {
+        panic!("expected code mode exec tool");
+    };
+    assert!(!exec.description.contains("mcp__app__lookup("));
+    assert!(exec.description.contains("mcp__search_service__web_run("));
+    assert!(
+        plan.code_mode_tool_names
+            .values()
+            .any(|name| name == &ToolName::namespaced("mcp__app", "lookup"))
+    );
+}
+
+#[tokio::test]
 async fn code_mode_config_updates_exec_description() {
     for (configured_yield_time_ms, expected_yield_time_ms) in
         [(None, 30_000), (Some(10_000), 10_000)]
@@ -3142,6 +3186,32 @@ async fn multi_agent_v2_bedrock_workers_only_delegate_when_model_supports_v2() {
             plan.assert_registered_lacks(&[&spawn_agent_name, &followup_task_name]);
         }
     }
+}
+
+#[tokio::test]
+async fn copilot_agents_use_local_code_mode_tools() {
+    let plan = probe(|turn| {
+        set_features(
+            turn,
+            &[
+                Feature::CodeMode,
+                Feature::CodeModeOnly,
+                Feature::MultiAgentV2,
+            ],
+        );
+        let provider = ModelProviderInfo {
+            name: codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME.to_string(),
+            ..turn.provider.info().clone()
+        };
+        turn.provider = create_model_provider(provider, turn.auth_manager.clone());
+    })
+    .await;
+
+    let spawn = ToolName::namespaced("collaboration", "spawn_agent");
+    assert_eq!(
+        plan.exposures.get(&spawn.to_string()).copied(),
+        Some(ToolExposure::CodeModeOnly)
+    );
 }
 
 #[tokio::test]

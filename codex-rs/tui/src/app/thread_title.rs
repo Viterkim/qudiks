@@ -33,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) const THREAD_TITLE_MAX_CHARS: usize = 36;
 const THREAD_TITLE_MODEL: &str = "gpt-5.6-luna";
+const COPILOT_THREAD_TITLE_MODEL: &str = "gpt-5.4-nano";
 pub(super) const THREAD_TITLE_PROMPT_MAX_BYTES: usize = 960;
 const THREAD_TITLE_RECENT_MESSAGES: usize = 8;
 
@@ -98,20 +99,35 @@ impl App {
             }
         };
         let request_handle = app_server.request_handle();
-        let model = if self.chat_widget.config_ref().model_provider_id == "openai"
-            && self.chat_widget.has_chatgpt_account()
-            && self
-                .chat_widget
-                .model_catalog()
-                .try_list_models()
-                .is_ok_and(|models| models.iter().any(|model| model.model == THREAD_TITLE_MODEL))
-        {
-            THREAD_TITLE_MODEL.to_string()
-        } else {
-            self.chat_widget.current_model().to_string()
-        };
-        let effort = (model == THREAD_TITLE_MODEL).then_some(ReasoningEffort::Low);
         let config = self.chat_widget.config_ref();
+        let models = self
+            .chat_widget
+            .model_catalog()
+            .try_list_models()
+            .unwrap_or_default();
+        let title_model = match config.model_provider_id.as_str() {
+            "openai" if self.chat_widget.has_chatgpt_account() => Some(THREAD_TITLE_MODEL),
+            // The catalog forces code mode tools and the agent prompt on the bigger models,
+            // nano gets neither.
+            "github-copilot" => Some(COPILOT_THREAD_TITLE_MODEL),
+            _ => None,
+        };
+        let model = title_model
+            .filter(|title| models.iter().any(|preset| preset.model == *title))
+            .map_or_else(
+                || self.chat_widget.current_model().to_string(),
+                str::to_string,
+            );
+
+        // A title doesn't need the model's default effort, Carbon and Sol default to high.
+        let supports_low = models.iter().any(|preset| {
+            preset.model == model
+                && preset
+                    .supported_reasoning_efforts
+                    .iter()
+                    .any(|option| option.effort == ReasoningEffort::Low)
+        });
+        let effort = (model == THREAD_TITLE_MODEL || supports_low).then_some(ReasoningEffort::Low);
         let options = TemporaryStructuredThreadOptions {
             kind: TemporaryThreadKind::Title,
             model,
