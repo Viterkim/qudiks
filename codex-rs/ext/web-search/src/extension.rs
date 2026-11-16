@@ -19,6 +19,7 @@ use codex_extension_api::ThreadStartInput;
 use codex_extension_api::ToolContributor;
 use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
+use codex_model_provider::GITHUB_COPILOT_PROVIDER_NAME;
 use codex_model_provider::WorkspaceRoutingContext;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::config_types::WebSearchContextSize;
@@ -37,6 +38,7 @@ struct WebSearchExtension {
 struct WebSearchExtensionConfig {
     provider_supports_search: bool,
     http_client_factory: HttpClientFactory,
+    copilot: bool,
     provider: ModelProviderInfo,
     settings: SearchSettings,
 }
@@ -48,6 +50,7 @@ impl From<&Config> for WebSearchExtensionConfig {
                 || config.model_provider.uses_openai_actor_authorization()
                 || config.model_provider.supports_standalone_web_search,
             http_client_factory: config.http_client_factory(),
+            copilot: config.model_provider.name == GITHUB_COPILOT_PROVIDER_NAME,
             provider: config.model_provider.clone(),
             settings: search_settings(config),
         }
@@ -134,6 +137,9 @@ impl ToolContributor for WebSearchExtension {
             return Vec::new();
         };
         if !config.provider_supports_search || *mode == WebSearchMode::Disabled {
+            return Vec::new();
+        }
+        if config.copilot {
             return Vec::new();
         }
         let auth = thread_store
@@ -238,6 +244,7 @@ mod tests {
         thread_store.insert(WebSearchExtensionConfig {
             provider_supports_search: true,
             http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            copilot: false,
             provider: ModelProviderInfo::create_openai_provider(/*base_url*/ None),
             settings: Default::default(),
         });

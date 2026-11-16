@@ -1,81 +1,117 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Qudiks
 
----
+A fork of [Codex](https://github.com/openai/codex) with GitHub Copilot support.
+You can also use a ChatGPT subscription, OpenAI API credits, or a local model server.
 
-## Quickstart
+## Install
 
-### Installing and running Codex CLI
-
-Run the following on Mac or Linux to install Codex CLI:
+For Linux x86_64 with glibc. Needs Bash, Git, curl and tar.
 
 ```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+bash -c 'cd "$(mktemp -d)" && git clone --depth 1 --filter=blob:none --sparse -b fork-off https://github.com/Viterkim/qudiks.git . && ./setup-qudiks-bin.sh'
 ```
 
-Run the following on Windows to install Codex CLI:
+Installs the latest release into `~/.cargo/bin` and opens GitHub sign-in.
+New installs use GPT-6.1 Sol with high reasoning when available.
+Add `~/.cargo/bin` to your `PATH` if needed.
+
+YOLO is on by default, so commands run without approval prompts or a sandbox.
+Add `--no-yolo` after `./setup-qudiks-bin.sh` inside the install command to keep those protections.
+
+## Choose a provider
 
 ```shell
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+qudiks --github                         # GitHub Copilot
+qudiks --codex                          # ChatGPT subscription
+qudiks --openai-api                     # OpenAI API credits
+qudiks --endpoint http://localhost:8080  # llama.cpp or another local server
 ```
 
-The standalone installers download from `https://releases.openai.com/codex` by default and fall back to GitHub Releases if a metadata or asset download is unavailable. To force GitHub Releases, set `CODEX_INSTALLER_USE_RELEASES_OPENAI_COM` to `false` (`0` and `no` are also accepted):
+Plain `qudiks` uses your configured provider, normally GitHub Copilot.
+These flags select a provider for that launch and also work with `resume`, `fork`
+and `exec`.
+
+GitHub Copilot needs a Copilot seat. List your available models or refresh the
+catalog after new ones become available:
 
 ```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false sh
+qudiks login github-copilot models
+qudiks login github-copilot setup
 ```
 
-```powershell
-$env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM='false'; irm https://chatgpt.com/codex/install.ps1 | iex
+`--codex` opens ChatGPT sign-in when needed. `--openai-api` asks for an API key
+and saves it, or reads `OPENAI_API_KEY` from your environment.
+
+`--endpoint` uses an OpenAI-compatible server with streaming Chat Completions
+and tool calling. It discovers models from `/v1/models`, and a URL without a path
+gets `/v1` appended. For servers that require a key, add this to your config:
+
+```toml
+[model_providers.endpoint]
+experimental_bearer_token = "your-endpoint-key"
 ```
 
-Codex CLI can also be installed via the following package managers:
+## Use it
 
 ```shell
-# Install using npm
-npm install -g @openai/codex
+qudiks -C ~/project                     # start in a directory
+qudiks -m gemini-3.8-flash               # choose a model for this session
+qudiks -c model_reasoning_effort=high    # choose reasoning effort
+qudiks resume --last                    # continue the last session
+qudiks fork --last                      # branch off the last session
+qudiks exec "explain this project"       # run without the interactive UI
+qudiks --help
 ```
+
+Inside Qudiks:
+
+- `/model` changes the model and reasoning effort.
+- `/config` changes appearance, notifications and input settings. Changes save automatically.
+- `/usage` shows usage for the active provider.
+- `/usage toggle` shows or hides Copilot credits in the bottom right.
+  Also accepts `on` and `off`. GitHub mode only, off by default, refreshed about every five minutes.
+- `/status` shows the current session configuration.
+- `/update` installs the latest release.
+
+Tips are off by default. You can turn them on in `/config`.
+
+Config, credentials, skills and sessions live in `~/.qudiks`.
+Set `QUDIKS_HOME` to use another directory. `CODEX_HOME` is also accepted,
+with `QUDIKS_HOME` taking precedence.
+
+## Update
+
+Run `/update` inside Qudiks or this in a terminal, then relaunch:
 
 ```shell
-# Install using Homebrew
-brew install --cask codex
+qudiks update
 ```
 
-Then simply run `codex` to get started.
+This installs the latest published Linux binary and enables YOLO.
+Your credentials and settings stay. It also replaces an installed source build.
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+## Build from source
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+Needs rustup, a C toolchain, OpenSSL headers and pkg-config.
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+```shell
+git clone --depth 1 --single-branch --branch fork-off https://github.com/Viterkim/qudiks.git
+cd qudiks
+./setup-qudiks.sh                       # build release, install and sign in
+./setup-qudiks.sh --debug --skip-login   # faster local build
+```
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+For a release archive ready to upload:
 
-</details>
+```shell
+./qudiks-prepare-release.sh --skip-install
+```
 
-### Using Codex with your ChatGPT plan
+Writes `dist/qudiks-linux-x86_64.tar.gz` with the CLI, code mode helper and installer.
+The display version lives in `codex-rs/tui/assets/qudiks-version`.
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
+## Inspired by
 
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+- [Codex](https://github.com/openai/codex)
+- [hk-vk/codexpilot](https://github.com/hk-vk/codexpilot)
+- [GaussianGuaicai/Codex-For-Copilot](https://github.com/GaussianGuaicai/Codex-For-Copilot)

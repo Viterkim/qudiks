@@ -791,6 +791,7 @@ impl ChatComposer {
                 context_window_percent: None,
                 context_window_used_tokens: None,
                 context_window_hidden: false,
+                copilot_credits: None,
                 collaboration_mode_indicator: None,
                 goal_status_indicator: None,
                 ide_context_active: false,

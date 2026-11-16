@@ -24,6 +24,33 @@ fn composer() -> ChatComposer {
 }
 
 #[test]
+fn copilot_credits_fit_before_warnings_and_yield_on_narrow_terminals() {
+    let mut composer = composer();
+    composer.footer.show_warnings_key = Some(crate::key_hint::plain(KeyCode::F(2)).into());
+    composer.set_copilot_credits(Some("11.8K / 30K C".to_string()));
+    let options = ComposerRenderOptions {
+        warning_count: 1,
+        ..Default::default()
+    };
+    let height = composer.desired_height_with_options(100, options);
+    let (buffer, _) = render_status(&composer, Rect::new(0, 0, 100, height), options);
+    let warning = composer.footer.warning_notice_area.get().unwrap();
+    let footer: String = (0..100).map(|x| buffer[(x, warning.y)].symbol()).collect();
+    let credits = footer.find("11.8K / 30K C").expect("credits visible");
+    let credits = footer[..credits].chars().count();
+    assert!(credits + "11.8K / 30K C".len() < usize::from(warning.x));
+
+    let height = composer.desired_height_with_options(14, options);
+    let (buffer, _) = render_status(&composer, Rect::new(0, 0, 14, height), options);
+    assert!(composer.footer.warning_notice_area.get().is_some());
+    assert!(!frame(&buffer).contains("11.8K"));
+
+    composer.set_copilot_credits(None);
+    let (text, _) = render(&composer, 100, None);
+    assert!(!text.contains("11.8K"));
+}
+
+#[test]
 fn extension_status_line_clips_links_to_footer_layout() {
     let mut composer = composer();
     let tree: crate::ui_tree::UiTree = r#"{
