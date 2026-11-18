@@ -1494,6 +1494,23 @@ async fn usage_views_open_the_requested_summary_mode() {
 }
 
 #[tokio::test]
+async fn copilot_usage_toggle_saves_the_footer_preference() {
+    use crate::config_panel::ConfigPreference;
+    use crate::config_panel::ConfigToggle;
+
+    let (mut chat, mut rx, mut ops) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.model_provider_id = "github-copilot".into();
+    for (argument, enabled) in [("toggle", true), ("off", false), ("on", true)] {
+        chat.dispatch_command_with_args(SlashCommand::Usage, argument.into(), Vec::new());
+        assert_matches!(rx.try_recv(), Ok(AppEvent::SaveConfigPreference(ConfigPreference::Toggle {
+            setting: ConfigToggle::CopilotUsageIndicator,
+            enabled: actual,
+        })) if actual == enabled);
+    }
+    assert!(ops.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn usage_command_runs_with_backend_auth_without_chatgpt_account_flag() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.update_account_state(

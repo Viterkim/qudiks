@@ -77,6 +77,7 @@ use crate::text_formatting::proper_join;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
 use crate::version::CODEX_CLI_VERSION;
+use crate::version::qudiks_display_version;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppSummary;
@@ -255,11 +256,13 @@ use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
 mod activity_groups;
 mod activity_presentation;
+mod api_usage;
 mod command_lifecycle;
 mod config_panel;
 mod connector_mentions;
 mod connectors;
 mod constructor;
+mod copilot_usage;
 mod dynamic_activity;
 mod empty_state_policy;
 pub(crate) use self::connectors::ConnectorScopeGeneration;
@@ -310,6 +313,7 @@ mod hook_lifecycle;
 mod hooks;
 mod interaction;
 pub(crate) use interaction::KeyEventAction;
+mod qudiks_update;
 mod skills;
 mod slash_command_args;
 mod slash_dispatch;
@@ -480,7 +484,12 @@ const ASK_FOR_APPROVAL_LABEL: &str = "Ask for approval";
 const APPROVE_FOR_ME_LABEL: &str = "Approve for me";
 const AUTO_REVIEW_DESCRIPTION: &str = "Only ask for actions detected as potentially unsafe";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-const DEFAULT_STATUS_LINE_ITEMS: [&str; 3] = ["model-with-reasoning", "current-dir", "thread-name"];
+const DEFAULT_STATUS_LINE_ITEMS: [&str; 4] = [
+    "model-with-reasoning",
+    "current-dir",
+    "provider",
+    "thread-name",
+];
 
 /// Common initialization parameters shared by all `ChatWidget` constructors.
 pub(crate) struct ChatWidgetInit {
@@ -702,6 +711,7 @@ pub(crate) struct ChatWidget {
     read_only_history: bool,
     thread_settings_confirmed: bool,
     provider_error: Option<codex_app_server_protocol::ModelProviderError>,
+    copilot_usage: copilot_usage::CopilotUsageState,
     /// Covers both queued and executing forks so repeated shortcuts cannot queue another one.
     pub(crate) fork_in_progress: bool,
     misalignment_policy_violation: Option<misalignment_policy::MisalignmentViolation>,
@@ -1222,6 +1232,7 @@ impl ChatWidget {
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
+        self.refresh_copilot_usage_indicator();
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.tick_rate_limit_recovery_prompt(Instant::now());
@@ -1579,7 +1590,7 @@ impl ChatWidget {
                 DEFAULT_MODEL_DISPLAY_NAME.to_string(),
                 /*reasoning_effort*/ None,
                 config.cwd.to_path_buf(),
-                CODEX_CLI_VERSION,
+                qudiks_display_version(),
             )
             .with_yolo_mode(history_cell::is_yolo_mode(config)),
         )
@@ -2145,6 +2156,9 @@ impl Drop for ChatWidget {
     }
 }
 
+#[cfg(not(test))]
+const PLACEHOLDER: &str = "Qudiks siger spurgt?";
+#[cfg(test)]
 const PLACEHOLDER: &str = "Ask Codex to do anything";
 const SIDE_PLACEHOLDER: &str = "Ask a follow-up question";
 

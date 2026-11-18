@@ -930,10 +930,13 @@ pub struct Tui {
     #[serde(default)]
     pub rendering: TuiRendering,
 
-    /// Show startup tooltips in the TUI welcome screen.
-    /// Defaults to `true`.
-    #[serde(default = "default_true")]
+    /// Show startup and turn tips. Defaults to `false`.
+    #[serde(default)]
     pub show_tooltips: bool,
+
+    /// Show Copilot AI credits in the footer, refreshed every five minutes.
+    #[serde(default)]
+    pub copilot_usage_indicator: bool,
 
     /// Show informational notices about connected app server version differences.
     /// Defaults to `true`; this does not control compatibility errors or version status.
@@ -1015,7 +1018,7 @@ pub struct Tui {
     /// Ordered list of status line item identifiers.
     ///
     /// When set, the TUI renders the selected items as the status line.
-    /// When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, and `thread-name`.
+    /// When unset, the TUI defaults to: `model-with-reasoning`, `current-dir`, `provider`, and `thread-name`.
     #[serde(default)]
     pub status_line: Option<Vec<String>>,
 
