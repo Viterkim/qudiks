@@ -748,9 +748,16 @@ impl ChatWidget {
             StatusLineItem::Profile => self
                 .status_line_config_profile()
                 .map(|name| format!("profile: {name}")),
-            StatusLineItem::Provider => self
-                .thread_id
-                .map(|_| format!("provider: {}", self.config.model_provider_id)),
+            StatusLineItem::Provider => {
+                self.thread_id
+                    .map(|_| match self.config.model_provider_id.as_str() {
+                        "github-copilot" => "GitHub".into(),
+                        "openai" => "Codex".into(),
+                        "openai-api" => "OpenAI API".into(),
+                        "endpoint" => "Custom".into(),
+                        provider => format!("provider: {provider}"),
+                    })
+            }
             StatusLineItem::CurrentDir => Some(self.workspace_directory_display()),
             StatusLineItem::ProjectRoot => self.status_line_project_root_name(),
             StatusLineItem::Hostname => os_host_name(),

@@ -850,8 +850,11 @@ pub struct Config {
     /// Rich content rendering preferences, independent of animations.
     pub tui_rendering: codex_config::types::TuiRendering,
 
-    /// Show startup tooltips in the TUI welcome screen.
+    /// Show startup and turn tips.
     pub show_tooltips: bool,
+
+    /// Show Copilot AI credits in the footer.
+    pub tui_copilot_usage_indicator: bool,
 
     /// Show a TUI notice when the connected app server is an older stable release.
     pub tui_show_server_version_notice: bool,
@@ -5016,7 +5019,8 @@ impl Config {
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             tui_effects: cfg.tui.as_ref().map(|t| t.effects).unwrap_or_default(),
             tui_rendering: cfg.tui.as_ref().map(|t| t.rendering).unwrap_or_default(),
-            show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),
+            show_tooltips: cfg.tui.as_ref().is_some_and(|t| t.show_tooltips),
+            tui_copilot_usage_indicator: cfg.tui.as_ref().is_some_and(|t| t.copilot_usage_indicator),
             tui_show_server_version_notice: cfg
                 .tui
                 .as_ref()

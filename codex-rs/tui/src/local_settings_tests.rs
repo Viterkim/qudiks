@@ -128,6 +128,7 @@ async fn local_load_preserves_defaults_and_resolved_overrides() -> anyhow::Resul
 [tui]
 animations = false
 show_tooltips = false
+copilot_usage_indicator = true
 show_server_version_notice = false
 auto_recap = false
 fullscreen_transcript = true
@@ -193,6 +194,7 @@ fast_default_opt_out = true
         assert_eq!(config.startup_warnings, Vec::<String>::new());
         assert_eq!(config.tui_mouse_scroll_speed, Some(1.5));
         assert!(config.tui_fullscreen_transcript);
+        assert_eq!(config.tui_copilot_usage_indicator, !config_text.is_empty());
         let bootstrap = crate::legacy_core::config::load_config_toml_with_layer_stack(
             home.path(),
             Some(&project_cwd),
