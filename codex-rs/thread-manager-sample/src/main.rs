@@ -301,6 +301,7 @@ async fn new_config(
         tui_effects: Default::default(),
         tui_rendering: Default::default(),
         show_tooltips: true,
+        tui_copilot_usage_indicator: false,
         tui_show_server_version_notice: true,
         tui_auto_recap: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),

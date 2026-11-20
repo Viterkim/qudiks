@@ -33,6 +33,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(super) const THREAD_TITLE_MAX_CHARS: usize = 36;
 const THREAD_TITLE_MODEL: &str = "gpt-5.6-luna";
+const COPILOT_THREAD_TITLE_MODEL: &str = "gpt-5.4-nano";
 pub(super) const THREAD_TITLE_PROMPT_MAX_BYTES: usize = 960;
 const THREAD_TITLE_RECENT_MESSAGES: usize = 8;
 
@@ -101,20 +102,40 @@ impl App {
                 (recent_conversation_thread_title_prompt(source_text), None)
             }
         };
-        let model = if (matches!(&request_handle, AppServerRequestHandle::Cloud(_))
-            || self.chat_widget.config_ref().model_provider_id == "openai")
-            && self.chat_widget.has_chatgpt_account()
-            && self
-                .chat_widget
-                .model_catalog()
-                .try_list_models()
-                .is_ok_and(|models| models.iter().any(|model| model.model == THREAD_TITLE_MODEL))
-        {
-            THREAD_TITLE_MODEL.to_string()
-        } else {
-            self.chat_widget.current_model().to_string()
+        let config = self.chat_widget.config_ref();
+        let models = self
+            .chat_widget
+            .model_catalog()
+            .try_list_models()
+            .unwrap_or_default();
+        let title_model = match config.model_provider_id.as_str() {
+            _ if matches!(&request_handle, AppServerRequestHandle::Cloud(_))
+                && self.chat_widget.has_chatgpt_account() =>
+            {
+                Some(THREAD_TITLE_MODEL)
+            }
+            "openai" if self.chat_widget.has_chatgpt_account() => Some(THREAD_TITLE_MODEL),
+            // The catalog forces code mode tools and the agent prompt on the bigger models,
+            // nano gets neither.
+            "github-copilot" => Some(COPILOT_THREAD_TITLE_MODEL),
+            _ => None,
         };
-        let effort = (model == THREAD_TITLE_MODEL).then_some(ReasoningEffort::Low);
+        let model = title_model
+            .filter(|title| models.iter().any(|preset| preset.model == *title))
+            .map_or_else(
+                || self.chat_widget.current_model().to_string(),
+                str::to_string,
+            );
+
+        // A title doesn't need the model's default effort, Carbon and Sol default to high.
+        let supports_low = models.iter().any(|preset| {
+            preset.model == model
+                && preset
+                    .supported_reasoning_efforts
+                    .iter()
+                    .any(|option| option.effort == ReasoningEffort::Low)
+        });
+        let effort = (model == THREAD_TITLE_MODEL || supports_low).then_some(ReasoningEffort::Low);
         let event_sender = self.app_event_tx.clone();
         if let AppServerRequestHandle::Cloud(handle) = request_handle {
             let writer = app_server.automatic_thread_name_writer(thread_id, expected_name);

@@ -4031,6 +4031,9 @@ impl Session {
             if !file_backed {
                 prepare_audio_response_items(std::slice::from_mut(item));
             }
+            turn_context
+                .provider
+                .prepare_request_items(std::slice::from_mut(item));
             // Most response items get their passthrough turn ID at the durable history boundary.
             Self::stamp_response_item_for_history(item, &turn_context.sub_id);
             self.assign_missing_response_item_id(item);
