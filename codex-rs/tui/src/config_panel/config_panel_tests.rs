@@ -25,6 +25,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 const STATUS: ConfigPanelStatus = ConfigPanelStatus {
     transcript_mode: crate::transcript_mode::TranscriptMode::Owned,
+    github_copilot: false,
     copy_on_select: true,
     right_click_paste: Ok(false),
     custom_notification_filters: false,

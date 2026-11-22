@@ -541,6 +541,7 @@ impl ChatWidget {
             SlashCommand::Rc => self.app_event_tx.send(AppEvent::RemoteControl(
                 crate::app::remote_control::Action::Menu,
             )),
+            SlashCommand::Update => self.open_qudiks_update_prompt(),
             SlashCommand::Warnings => self.app_event_tx.send(AppEvent::OpenWarnings),
             SlashCommand::Status => {
                 if self.should_prefetch_rate_limits() {
@@ -571,7 +572,16 @@ impl ChatWidget {
             }
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
-                    self.open_usage_menu();
+                    if self.is_github_copilot_provider() {
+                        self.show_github_copilot_usage();
+                    } else if matches!(
+                        self.config.model_provider_id.as_str(),
+                        "openai-api" | "claude-api" | "endpoint"
+                    ) {
+                        self.show_api_usage();
+                    } else {
+                        self.open_usage_menu();
+                    }
                 }
             }
             SlashCommand::Ide => {
@@ -852,13 +862,22 @@ impl ChatWidget {
             }
             SlashCommand::Usage => {
                 if self.ensure_usage_command_available() {
-                    match crate::analytics::TokenActivityView::parse(trimmed) {
-                        Some(view) => self
-                            .app_event_tx
-                            .send(AppEvent::OpenAnalytics { view: Some(view) }),
-                        None => self.add_error_message(
-                            "Usage: /usage [daily|weekly|cumulative]".to_string(),
-                        ),
+                    if self.is_github_copilot_provider() {
+                        self.handle_copilot_usage_args(trimmed);
+                    } else if matches!(
+                        self.config.model_provider_id.as_str(),
+                        "openai-api" | "claude-api" | "endpoint"
+                    ) {
+                        self.show_api_usage();
+                    } else {
+                        match crate::analytics::TokenActivityView::parse(trimmed) {
+                            Some(view) => self
+                                .app_event_tx
+                                .send(AppEvent::OpenAnalytics { view: Some(view) }),
+                            None => self.add_error_message(
+                                "Usage: /usage [daily|weekly|cumulative]".to_string(),
+                            ),
+                        }
                     }
                 }
             }
@@ -1304,7 +1323,7 @@ impl ChatWidget {
             collaboration_modes_enabled: self.collaboration_modes_enabled(),
             connectors_enabled: self.connectors_enabled(),
             plugins_command_enabled: self.config.features.enabled(Feature::Plugins),
-            token_activity_command_enabled: self.has_codex_backend_auth,
+            token_activity_command_enabled: self.usage_command_available(),
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
             service_tier_commands_enabled: !self.current_model_service_tier_commands().is_empty(),
             daybreak_command_description: self.daybreak_command_description(),
@@ -1315,12 +1334,24 @@ impl ChatWidget {
         }
     }
 
+    pub(super) fn usage_command_available(&self) -> bool {
+        self.has_codex_backend_auth
+            || matches!(
+                self.config.model_provider_id.as_str(),
+                "github-copilot" | "openai-api" | "claude-api" | "endpoint"
+            )
+    }
+
     fn ensure_usage_command_available(&mut self) -> bool {
-        if self.has_codex_backend_auth {
+        if self.usage_command_available() {
             return true;
         }
         self.add_error_message(USAGE_CHATGPT_LOGIN_REQUIRED.to_string());
         false
+    }
+
+    fn is_github_copilot_provider(&self) -> bool {
+        self.config.model_provider_id == "github-copilot"
     }
 
     fn queued_command_drain_result(&self, cmd: SlashCommand) -> QueueDrain {
@@ -1393,6 +1424,7 @@ impl ChatWidget {
             | SlashCommand::Quit
             | SlashCommand::Exit
             | SlashCommand::Logout
+            | SlashCommand::Update
             | SlashCommand::Mention
             | SlashCommand::Skills
             | SlashCommand::Import

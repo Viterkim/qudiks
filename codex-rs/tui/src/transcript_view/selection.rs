@@ -105,6 +105,8 @@ impl TableSelection {
     }
 }
 
+const SELECTION_EDGE_SCROLL_ROWS: isize = 4;
+
 pub(super) struct Selection {
     pending_copy: Option<PendingCopy>,
     primary_owner: Option<Arc<()>>,
@@ -878,7 +880,7 @@ impl TranscriptView {
             return false;
         };
         let previous = self.position;
-        self.scroll(cells, direction);
+        self.scroll(cells, direction * SELECTION_EDGE_SCROLL_ROWS);
         previous != self.position
     }
 

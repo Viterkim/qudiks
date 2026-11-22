@@ -2,6 +2,9 @@ use crate::auth::SharedAuthProvider;
 use crate::common::ResponseStream;
 use crate::common::ResponsesApiRequest;
 use crate::common::with_tool_results;
+use crate::endpoint::anthropic_messages;
+use crate::endpoint::chat_completions;
+use crate::endpoint::copilot_grok;
 use crate::endpoint::session::EndpointSession;
 use crate::error::ApiError;
 use crate::provider::Provider;
@@ -30,6 +33,13 @@ use tracing::instrument;
 pub struct ResponsesClient<T: HttpTransport> {
     session: EndpointSession<T>,
     sse_telemetry: Option<Arc<dyn SseTelemetry>>,
+    wire_api: WireApi,
+}
+
+enum WireApi {
+    Responses,
+    ChatCompletions,
+    AnthropicMessages,
 }
 
 #[derive(Default)]
@@ -48,7 +58,18 @@ impl<T: HttpTransport> ResponsesClient<T> {
         Self {
             session: EndpointSession::new(transport, provider, auth),
             sse_telemetry: None,
+            wire_api: WireApi::Responses,
         }
+    }
+
+    pub fn with_chat_completions(mut self) -> Self {
+        self.wire_api = WireApi::ChatCompletions;
+        self
+    }
+
+    pub fn with_anthropic_messages(mut self) -> Self {
+        self.wire_api = WireApi::AnthropicMessages;
+        self
     }
 
     pub fn with_telemetry(
@@ -59,6 +80,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         Self {
             session: self.session.with_request_telemetry(request),
             sse_telemetry: sse,
+            wire_api: self.wire_api,
         }
     }
 
@@ -97,10 +119,6 @@ impl<T: HttpTransport> ResponsesClient<T> {
             tool_results,
             turn_state,
         } = options;
-        let body = EncodedJsonBody::encode(&request)
-            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-
-        on_encoded(body.shared_bytes());
         let mut headers = extra_headers;
         if let Some(ref thread_id) = thread_id {
             insert_header(&mut headers, "x-client-request-id", thread_id);
@@ -109,6 +127,58 @@ impl<T: HttpTransport> ResponsesClient<T> {
         if let Some(subagent) = subagent_header(&session_source) {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }
+
+        if matches!(self.wire_api, WireApi::AnthropicMessages) {
+            let input = serde_json::to_value(&request).map_err(|error| {
+                ApiError::Stream(format!("encoding Claude Messages request: {error}"))
+            })?;
+            return anthropic_messages::stream(
+                &self.session,
+                input,
+                headers,
+                self.sse_telemetry.clone(),
+                on_encoded,
+            )
+            .await;
+        }
+
+        if matches!(self.wire_api, WireApi::ChatCompletions)
+            || chat_completions::enabled(&self.session.provider().name, &request.model)
+        {
+            let mut request = serde_json::to_value(request).map_err(|error| {
+                ApiError::Stream(format!("encoding Chat Completions request: {error}"))
+            })?;
+            if matches!(self.wire_api, WireApi::ChatCompletions) {
+                request["reasoning"] = Value::Null;
+            }
+            return chat_completions::stream(
+                &self.session,
+                request,
+                headers,
+                self.sse_telemetry.clone(),
+                on_encoded,
+            )
+            .await;
+        }
+
+        if copilot_grok::enabled(&self.session.provider().name, &request.model) {
+            let mut body = serde_json::to_value(request).map_err(|error| {
+                ApiError::Stream(format!("encoding Copilot Grok request: {error}"))
+            })?;
+            let names = copilot_grok::translate(&mut body)?;
+            let body = EncodedJsonBody::encode(&body).map_err(|error| {
+                ApiError::Stream(format!("encoding Copilot Grok request: {error}"))
+            })?;
+            on_encoded(body.shared_bytes());
+            let stream = self
+                .stream_encoded(body, headers, compression, turn_state)
+                .await?;
+            return Ok(copilot_grok::restore_calls(stream, names));
+        }
+
+        let body = EncodedJsonBody::encode(&request)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
+        on_encoded(body.shared_bytes());
 
         if !tool_results.is_empty()
             && let Ok(json) = std::str::from_utf8(body.as_bytes())
@@ -151,15 +221,54 @@ impl<T: HttpTransport> ResponsesClient<T> {
     )]
     pub async fn stream(
         &self,
-        body: Value,
+        mut body: Value,
         extra_headers: HeaderMap,
         compression: Compression,
         turn_state: Option<Arc<OnceLock<String>>>,
     ) -> Result<ResponseStream, ApiError> {
+        if matches!(self.wire_api, WireApi::AnthropicMessages) {
+            return anthropic_messages::stream(
+                &self.session,
+                body,
+                extra_headers,
+                self.sse_telemetry.clone(),
+                |_| {},
+            )
+            .await;
+        }
+        if matches!(self.wire_api, WireApi::ChatCompletions)
+            || chat_completions::enabled(
+                &self.session.provider().name,
+                body["model"].as_str().unwrap_or(""),
+            )
+        {
+            if matches!(self.wire_api, WireApi::ChatCompletions) {
+                body["reasoning"] = Value::Null;
+            }
+            return chat_completions::stream(
+                &self.session,
+                body,
+                extra_headers,
+                self.sse_telemetry.clone(),
+                |_| {},
+            )
+            .await;
+        }
+        let names = copilot_grok::enabled(
+            &self.session.provider().name,
+            body["model"].as_str().unwrap_or(""),
+        )
+        .then(|| copilot_grok::translate(&mut body))
+        .transpose()?;
         let body = EncodedJsonBody::encode(&body)
             .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
-        self.stream_encoded(body, extra_headers, compression, turn_state)
-            .await
+        let stream = self
+            .stream_encoded(body, extra_headers, compression, turn_state)
+            .await?;
+        Ok(match names {
+            Some(names) => copilot_grok::restore_calls(stream, names),
+            None => stream,
+        })
     }
 
     async fn stream_encoded(

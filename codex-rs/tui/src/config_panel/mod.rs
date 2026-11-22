@@ -91,6 +91,7 @@ fn reasoning_summary_label(summary: Option<ReasoningSummary>) -> &'static str {
 #[derive(Clone, Copy)]
 pub(crate) struct ConfigPanelStatus {
     pub(crate) transcript_mode: crate::transcript_mode::TranscriptMode,
+    pub(crate) github_copilot: bool,
     pub(crate) copy_on_select: bool,
     pub(crate) right_click_paste: Result<bool, &'static str>,
     pub(crate) custom_notification_filters: bool,
@@ -332,6 +333,16 @@ fn settings(tui: &Tui, status: ConfigPanelStatus) -> Vec<ConfigSetting> {
         },
         ConfigSetting {
             section: ConfigSection::Appearance,
+            label: "Copilot credits",
+            description: "Show used / included AI credits in the footer; refresh every five minutes",
+            keywords: "github usage budget credits footer",
+            value: ConfigSettingValue::Toggle {
+                setting: ConfigToggle::CopilotUsageIndicator,
+                enabled: ConfigToggle::CopilotUsageIndicator.enabled(tui),
+            },
+        },
+        ConfigSetting {
+            section: ConfigSection::Appearance,
             label: "Status line display",
             description: "Choose and reorder the information below the composer",
             keywords: "statusline footer model branch context",
@@ -482,6 +493,16 @@ fn settings(tui: &Tui, status: ConfigPanelStatus) -> Vec<ConfigSetting> {
             value: ConfigEditor::RightClickPaste.value(tui, status),
         },
     ];
+    settings.retain(|row| {
+        status.github_copilot
+            || !matches!(
+                row.value,
+                ConfigSettingValue::Toggle {
+                    setting: ConfigToggle::CopilotUsageIndicator,
+                    ..
+                }
+            )
+    });
     if status.transcript_mode.is_owned() {
         settings.push(ConfigSetting {
             section: ConfigSection::Sessions,

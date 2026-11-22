@@ -7,9 +7,13 @@ use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::SharedCliOptions;
 use std::path::PathBuf;
 
+pub fn qudiks_release_version() -> &'static str {
+    include_str!("../../tui/assets/qudiks-version").trim()
+}
+
 #[derive(Parser, Debug)]
 #[command(
-    version,
+    version = qudiks_release_version(),
     override_usage = "codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]"
 )]
 pub struct Cli {

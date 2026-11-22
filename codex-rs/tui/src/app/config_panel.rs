@@ -113,11 +113,10 @@ impl App {
                 .apply()
                 .await;
         if let Err(error) = result {
-            self.chat_widget
-                .refresh_config_panel(/*notice*/ Some(format!(
-                    "Could not save: {}",
-                    format_config_error(&error)
-                )));
+            let message = format!("Could not save: {}", format_config_error(&error));
+            if !self.chat_widget.refresh_config_panel(Some(message.clone())) {
+                self.chat_widget.add_error_message(message);
+            }
             return;
         }
 
@@ -151,10 +150,10 @@ impl App {
         {
             Ok(settings) => settings,
             Err(error) => {
-                self.chat_widget
-                    .refresh_config_panel(
-                        /*notice*/ Some(format!("Saved, but could not reload: {error}")),
-                    );
+                let message = format!("Saved, but could not reload: {error}");
+                if !self.chat_widget.refresh_config_panel(Some(message.clone())) {
+                    self.chat_widget.add_error_message(message);
+                }
                 return;
             }
         };
@@ -223,8 +222,10 @@ impl App {
         if effective {
             self.chat_widget
                 .refresh_config_panel_after_effective_save(notice, preference);
-        } else {
-            self.chat_widget.refresh_config_panel(notice);
+        } else if !self.chat_widget.refresh_config_panel(notice.clone())
+            && let Some(message) = notice
+        {
+            self.chat_widget.add_info_message(message, /*hint*/ None);
         }
         tui.frame_requester().schedule_frame();
     }

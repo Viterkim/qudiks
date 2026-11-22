@@ -57,6 +57,7 @@ pub enum SlashCommand {
     Daemon,
     #[strum(to_string = "rc", serialize = "remote")]
     Rc,
+    Update,
     Warnings,
     Cd,
     #[strum(to_string = "pwd", serialize = "cwd")]
@@ -121,6 +122,7 @@ impl SlashCommand {
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Daemon => "Manage the local background server",
             SlashCommand::Rc => "manage remote control for the local background server",
+            SlashCommand::Update => "install the latest Qudiks binary and launcher",
             SlashCommand::Warnings => "view retained warnings and diagnostic details",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Cd => "change the current working directory",
@@ -243,6 +245,7 @@ impl SlashCommand {
                 | SlashCommand::Exit
                 | SlashCommand::Status
                 | SlashCommand::Rc
+                | SlashCommand::Update
                 | SlashCommand::Warnings
                 | SlashCommand::DebugConfig
                 | SlashCommand::Pwd
@@ -275,6 +278,7 @@ impl SlashCommand {
             | SlashCommand::Cd
             | SlashCommand::Clear
             | SlashCommand::Logout
+            | SlashCommand::Update
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff

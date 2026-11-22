@@ -1,3 +1,6 @@
+mod anthropic_messages;
+mod chat_completions;
+mod copilot_grok;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;

@@ -262,6 +262,7 @@ impl ChatWidget {
             read_only_history: false,
             thread_settings_confirmed: false,
             provider_error: None,
+            copilot_usage: Default::default(),
             fork_in_progress: false,
             misalignment_policy_violation: None,
             normal_placeholder_text: placeholder,
@@ -361,7 +362,7 @@ impl ChatWidget {
             .set_connectors_enabled(widget.connectors_enabled());
         widget
             .bottom_pane
-            .set_token_activity_command_enabled(widget.has_codex_backend_auth);
+            .set_token_activity_command_enabled(widget.usage_command_available());
         widget.refresh_status_surfaces();
 
         widget

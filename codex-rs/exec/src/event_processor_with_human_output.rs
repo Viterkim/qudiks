@@ -21,6 +21,7 @@ use owo_colors::Style;
 use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use crate::event_processor::handle_last_message;
+use crate::qudiks_release_version;
 
 pub(crate) struct EventProcessorWithHumanOutput {
     bold: Style,
@@ -219,8 +220,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
         session_configured_event: &SessionConfiguredEvent,
         workspace_roots: &[PathUri],
     ) {
-        const VERSION: &str = env!("CARGO_PKG_VERSION");
-        eprintln!("OpenAI Codex v{VERSION}\n--------");
+        let version = qudiks_release_version();
+        let display_version = version.strip_prefix("0.0.").unwrap_or(version);
+        eprintln!("Åben KI Qudiks v{display_version}\n--------");
         for (key, value) in
             config_summary_entries(config, session_configured_event, workspace_roots)
         {
@@ -473,15 +475,17 @@ fn config_summary_entries(
             ),
         ),
     ];
-    if config.model_provider.wire_api == WireApi::Responses {
+    if config.model_provider.wire_api != WireApi::ChatCompletions {
         entries.push((
             "reasoning effort",
-            config
-                .model_reasoning_effort
+            session_configured_event
+                .reasoning_effort
                 .as_ref()
                 .map(std::string::ToString::to_string)
                 .unwrap_or_else(|| "none".to_string()),
         ));
+    }
+    if config.model_provider.wire_api == WireApi::Responses {
         entries.push((
             "reasoning summaries",
             config
