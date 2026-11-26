@@ -381,6 +381,7 @@ pub(crate) enum AppEvent {
     RunDaemonRestart,
     ConfirmDaemonUpdate(crate::update_action::DaemonUpdateSource),
     RunDaemonUpdate(crate::update_action::DaemonUpdateSource),
+    RunQudiksUpdate,
     ReviewMisalignment(Arc<crate::chatwidget::MisalignmentReview>),
     ContinueMisalignment(Arc<crate::chatwidget::MisalignmentReview>),
     CloseMisalignmentReview,
@@ -1002,6 +1003,19 @@ pub(crate) enum AppEvent {
     /// Open the authenticated account analytics dashboard.
     OpenAnalytics {
         view: Option<crate::analytics::TokenActivityView>,
+    },
+
+    /// A Copilot quota read finished for the footer or `/usage`.
+    CopilotUsageLoaded {
+        request_id: Uuid,
+        result: Result<codex_login::github_copilot::CopilotQuotaSnapshot, String>,
+    },
+
+    CopilotStatusUsageLoaded {
+        thread_id: Option<ThreadId>,
+        cell: crate::history_cell::CompositeHistoryCell,
+        handle: crate::status::StatusHistoryHandle,
+        snapshot: Option<codex_login::github_copilot::CopilotQuotaSnapshot>,
     },
 
     /// Open the reset-credit flow selected from the `/usage` menu.

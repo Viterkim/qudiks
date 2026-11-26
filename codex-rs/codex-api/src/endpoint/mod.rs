@@ -1,3 +1,6 @@
+mod anthropic_messages;
+mod chat_completions;
+mod copilot_grok;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;
@@ -8,6 +11,9 @@ pub(crate) mod responses_websocket;
 mod responses_websocket_probe;
 pub(crate) mod search;
 mod session;
+
+pub use chat_completions::COPILOT_GEMINI_REASONING_PREFIX;
+pub use chat_completions::retain_copilot_gemini_reasoning;
 
 pub use images::ImageRequestError;
 pub use images::ImagesClient;

@@ -3,11 +3,11 @@
 
 use crate::error::ApiError;
 use crate::error::parse_terminal_provider_error;
+use crate::rate_limits::retry_after_from_message;
 use crate::responses_headers::json_headers_to_http_headers;
 use codex_http_client::RetryAfter;
 use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 
 // Keep decoding unused fields: malformed values currently produce a stream error.
 #[derive(Debug, Deserialize)]
@@ -79,7 +79,7 @@ pub(super) fn parse_failed_response(response: Option<Value>) -> ApiError {
         },
         Some("rate_limit_exceeded" | "slow_down") => {
             let retry_after = retry_after_header
-                .or_else(|| try_parse_retry_delay(&error).and_then(RetryAfter::from_delay));
+                .or_else(|| error.message.as_deref().and_then(retry_after_from_message));
             ApiError::RateLimitExceeded {
                 message: error.message.unwrap_or_default(),
                 retry_after,
@@ -90,36 +90,6 @@ pub(super) fn parse_failed_response(response: Option<Value>) -> ApiError {
             retry_after: retry_after_header,
         },
     }
-}
-
-fn try_parse_retry_delay(err: &Error) -> Option<Duration> {
-    let re = rate_limit_regex();
-    if let Some(message) = &err.message
-        && let Some(captures) = re.captures(message)
-    {
-        let seconds = captures.get(1);
-        let unit = captures.get(2);
-
-        if let (Some(value), Some(unit)) = (seconds, unit) {
-            let value = value.as_str().parse::<f64>().ok()?;
-            let unit = unit.as_str().to_ascii_lowercase();
-
-            if unit == "s" || unit.starts_with("second") {
-                return Duration::try_from_secs_f64(value).ok();
-            } else if unit == "ms" {
-                return Some(Duration::from_millis(value as u64));
-            }
-        }
-    }
-    None
-}
-
-fn rate_limit_regex() -> &'static regex_lite::Regex {
-    static RE: std::sync::OnceLock<regex_lite::Regex> = std::sync::OnceLock::new();
-    #[expect(clippy::unwrap_used)]
-    RE.get_or_init(|| {
-        regex_lite::Regex::new(r"(?i)try again in\s*(\d+(?:\.\d+)?)\s*(s|ms|seconds?)").unwrap()
-    })
 }
 
 #[cfg(test)]

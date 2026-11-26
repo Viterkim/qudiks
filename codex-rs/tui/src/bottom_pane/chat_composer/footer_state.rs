@@ -414,6 +414,7 @@ pub(super) struct FooterState {
     pub(super) context_window_percent: Option<i64>,
     pub(super) context_window_used_tokens: Option<i64>,
     pub(super) context_window_hidden: bool,
+    pub(super) copilot_credits: Option<String>,
     pub(super) collaboration_mode_indicator: Option<CollaborationModeIndicator>,
     pub(super) goal_status_indicator: Option<GoalStatusIndicator>,
     pub(super) ide_context_active: bool,

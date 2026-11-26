@@ -106,6 +106,7 @@ use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
 use codex_tools::ToolSpec;
+use codex_tools::create_tools_json_for_responses_api;
 use codex_tools::create_tools_json_for_responses_lite;
 use codex_tools::create_tools_raw_json_for_responses_api;
 use eventsource_stream::Event;
@@ -1232,10 +1233,19 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
     ) -> Reasoning {
+        let mut effort = effort
+            .or_else(|| model_info.default_reasoning_level.clone())
+            .map(|effort| model_info.resolve_reasoning_effort(effort));
+        if self.state.provider.info().wire_api == WireApi::AnthropicMessages
+            && !model_info
+                .supported_reasoning_levels
+                .iter()
+                .any(|preset| Some(&preset.effort) == effort.as_ref())
+        {
+            effort = model_info.default_reasoning_level.clone();
+        }
         Reasoning {
-            effort: effort
-                .or_else(|| model_info.default_reasoning_level.clone())
-                .map(|effort| model_info.resolve_reasoning_effort(effort)),
+            effort,
             summary: (self.state.provider.capabilities().reasoning_summaries
                 && model_info.supports_reasoning_summary_parameter
                 && summary != ReasoningSummaryConfig::None)
@@ -1260,6 +1270,11 @@ impl ModelClient {
         include_internal: bool,
     ) -> Result<ResponsesApiRequest> {
         let mut input = prompt.get_formatted_input_for_request(model_info);
+        codex_api::retain_copilot_gemini_reasoning(
+            &mut input,
+            &self.state.provider.info().name,
+            &model_info.slug,
+        );
         if !self.reasoning_effort_override_enabled(model_info) {
             // Unsupported models and disabled overrides must also accept saved history.
             // Filter only the request copy; persisted history remains unchanged.
@@ -1277,12 +1292,18 @@ impl ModelClient {
                 }
             });
         }
+        let mut prompt_tools = prompt.tools.to_vec();
+        self.state.provider.prepare_request_tools(&mut prompt_tools);
         let is_openai = self.state.provider.info().is_openai();
         let request_ids = self.state.context_ids.request_ids(self.state.thread_id);
         let mut prefix = Vec::new();
         let tools = if model_info.use_responses_lite {
-            if !prompt.tools.is_empty() {
-                let tools = create_tools_json_for_responses_lite(prompt.tools.iter())?;
+            if !prompt_tools.is_empty() {
+                let tools = if self.state.provider.supports_namespace_tools(model_info) {
+                    create_tools_json_for_responses_lite(prompt_tools.iter())?
+                } else {
+                    create_tools_json_for_responses_api(&prompt_tools)?
+                };
                 prefix.push(ResponseItem::AdditionalTools {
                     id: Some(request_ids.id_by_content("at", &serde_json::to_vec(&tools)?)),
                     role: "developer".to_string(),
@@ -1291,7 +1312,7 @@ impl ModelClient {
             }
             None
         } else {
-            Some(create_tools_raw_json_for_responses_api(&prompt.tools)?.into())
+            Some(create_tools_raw_json_for_responses_api(&prompt_tools)?.into())
         };
         if !prompt.base_instructions.text.is_empty() {
             let mut instructions = ContextualUserFragment::into(BaseInstructionsFragment(
@@ -1379,11 +1400,18 @@ impl ModelClient {
             }
         }
         let client_metadata = responses_metadata.client_metadata(include_internal);
+        self.state
+            .provider
+            .prepare_model_request_items(model_info, &mut input);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: if prompt_tools.is_empty() {
+                String::new()
+            } else {
+                "auto".to_string()
+            },
             parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
             reasoning: Some(reasoning),
             store: false,
@@ -2161,8 +2189,14 @@ impl ResponsesHttpExecutor<'_> {
                 include_internal && self.client.captures_result_bodies(),
                 &responses_headers,
             );
-            tracing::Span::current().record("api.path", "/responses");
-            let transport = client_setup.http_transport("/responses")?;
+            let wire_api = self.client.state.provider.info().wire_api;
+            let endpoint = match wire_api {
+                WireApi::AnthropicMessages => "/messages",
+                WireApi::ChatCompletions => "/chat/completions",
+                WireApi::Responses => "/responses",
+            };
+            tracing::Span::current().record("api.path", endpoint);
+            let transport = client_setup.http_transport(endpoint)?;
             let request_auth_context = AuthRequestTelemetryContext::new(
                 client_setup.auth.as_ref().map(CodexAuth::auth_mode),
                 client_setup.api_auth.as_ref(),
@@ -2173,7 +2207,7 @@ impl ResponsesHttpExecutor<'_> {
             let (request_telemetry, sse_telemetry) = ModelClientSession::build_streaming_telemetry(
                 session_telemetry,
                 request_auth_context,
-                RequestRouteTelemetry::for_endpoint("/responses"),
+                RequestRouteTelemetry::for_endpoint(endpoint),
                 self.client.state.auth_env_telemetry.clone(),
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
@@ -2230,6 +2264,16 @@ impl ResponsesHttpExecutor<'_> {
             if let Some(recorder) = &self.client.executed_tool_calls {
                 let _ = recorder.scope_request_metadata(&mut request.input);
             }
+            self.client
+                .state
+                .provider
+                .prepare_request_items(&mut request.input);
+            options.extra_headers.extend(
+                self.client
+                    .state
+                    .provider
+                    .responses_headers(&request.input, &self.client.state.session_source),
+            );
             let request_session_telemetry =
                 session_telemetry_for_request(session_telemetry, &request);
             options.extra_headers.extend(responses_headers);
@@ -2272,6 +2316,11 @@ impl ResponsesHttpExecutor<'_> {
                 result_body_destination.as_ref(),
                 &request.input,
             );
+            let client = match wire_api {
+                WireApi::AnthropicMessages => client.with_anthropic_messages(),
+                WireApi::ChatCompletions => client.with_chat_completions(),
+                WireApi::Responses => client,
+            };
             let stream_result = client
                 .stream_request_with_observer(request, options, |wire| {
                     inference_trace_attempt.record_started(
@@ -2892,8 +2941,8 @@ impl ModelClientSession {
     ) -> Result<OpenedModelResponse> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
-            WireApi::Responses => {
-                if self.client.responses_websocket_enabled() {
+            WireApi::Responses | WireApi::ChatCompletions | WireApi::AnthropicMessages => {
+                if wire_api == WireApi::Responses && self.client.responses_websocket_enabled() {
                     let request_trace = current_span_w3c_trace_context();
                     match self
                         .stream_responses_websocket(

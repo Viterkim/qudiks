@@ -19,6 +19,7 @@ mod worktree;
 pub use cli::Cli;
 pub use cli::Command;
 pub use cli::ReviewArgs;
+pub use cli::qudiks_release_version;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;

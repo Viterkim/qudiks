@@ -131,6 +131,7 @@ impl ChatWidget {
             }
             ConfigToggle::AutomaticRecaps
             | ConfigToggle::CollapseTurnDetails
+            | ConfigToggle::CopilotUsageIndicator
             | ConfigToggle::CopyOnSelectClearSelection
             | ConfigToggle::Notifications
             | ConfigToggle::StartInVimMode
@@ -140,6 +141,9 @@ impl ChatWidget {
             && let Some(pet) = self.ambient_pet.as_mut()
         {
             pet.set_animations_enabled(tui.animations);
+        }
+        if setting == ConfigToggle::CopilotUsageIndicator {
+            self.refresh_copilot_usage_indicator();
         }
     }
 
@@ -179,6 +183,7 @@ impl ChatWidget {
                 | ConfigToggle::PasteDetection
                 | ConfigToggle::StartInVimMode
                 | ConfigToggle::StatusLineColors
+                | ConfigToggle::CopilotUsageIndicator
                 | ConfigToggle::Tips => {}
             }
         }
@@ -223,6 +228,7 @@ impl ChatWidget {
     fn config_panel_status(&self) -> ConfigPanelStatus {
         ConfigPanelStatus {
             transcript_mode: self.local_settings.transcript_mode,
+            github_copilot: self.config.model_provider_id == "github-copilot",
             copy_on_select: self.local_settings.copy_on_select(),
             right_click_paste: crate::app::PasteEnvironment::detect().status(
                 self.local_settings.tui.right_click_paste,

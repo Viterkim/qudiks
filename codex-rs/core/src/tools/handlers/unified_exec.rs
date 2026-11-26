@@ -20,11 +20,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod exec_command;
+mod grok_compat;
 pub(crate) mod preparation;
 mod write_stdin;
 
 pub use exec_command::ExecCommandHandler;
 pub(crate) use exec_command::ExecCommandHandlerOptions;
+pub(crate) use grok_compat::ExecCommandToolKind;
+pub use write_stdin::GrokWriteBashHandler;
 pub use write_stdin::WriteStdinHandler;
 
 /// Terminal tools expose the unified-exec process ID as `session_id`.
@@ -33,6 +36,7 @@ pub(crate) fn terminal_session_for_input(
 ) -> BoxFuture<'_, Result<ToolEnvironments, FunctionCallError>> {
     #[derive(Deserialize)]
     struct TerminalSessionArgs {
+        #[serde(alias = "shellId")]
         session_id: i32,
     }
 
@@ -76,6 +80,8 @@ pub(crate) struct ExecCommandArgs {
     yield_time_ms: u64,
     #[serde(default)]
     timeout_ms: Option<u64>,
+    #[serde(default)]
+    grok_background: bool,
     #[serde(default)]
     max_output_tokens: Option<usize>,
     #[serde(default)]

@@ -1,5 +1,10 @@
 load("//:defs.bzl", "MACOS_WEBRTC_RUSTC_LINK_FLAGS", "codex_rust_crate")
 
+exports_files(
+    ["assets/qudiks-version"],
+    visibility = ["//codex-rs/exec:__pkg__"],
+)
+
 codex_rust_crate(
     name = "tui",
     binaries_with_build_commit = ["codex-tui"],

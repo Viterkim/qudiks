@@ -28,6 +28,7 @@ enum Kind {
     Goal,
     Ide,
     Context,
+    Credits,
     Warning,
 }
 
@@ -180,8 +181,8 @@ impl Hints {
             }
         }
         for kind in [
-            Action, Side, Shell, Vim, Plan, Interrupt, Goal, Ide, Warning, Context, SideNav,
-            AgentName, Agents, Shortcuts,
+            Action, Side, Shell, Vim, Plan, Interrupt, Goal, Ide, Warning, Credits, Context,
+            SideNav, AgentName, Agents, Shortcuts,
         ] {
             if !overflow[kind.row(two)] {
                 continue;
@@ -249,6 +250,14 @@ pub(super) fn hint_area(area: Rect) -> Rect {
 }
 
 impl ChatComposer {
+    pub(crate) fn set_copilot_credits(&mut self, credits: Option<String>) -> bool {
+        if self.footer.copilot_credits == credits {
+            return false;
+        }
+        self.footer.copilot_credits = credits;
+        true
+    }
+
     pub(super) fn passive_hints(&self, options: ComposerRenderOptions<'_>) -> Option<Hints> {
         let mode = self.footer_mode();
         if options.footer.is_some()
@@ -348,6 +357,9 @@ impl ChatComposer {
             }
         }
         let show_warning = self.show_warning_notice(options);
+        if let Some(credits) = &self.footer.copilot_credits {
+            hints.add(Credits, [Line::from(credits.clone().dim())]);
+        }
         if !self.footer.status_line_enabled
             && !self.footer.context_window_hidden
             && self.footer.side_conversation_context_label.is_none()

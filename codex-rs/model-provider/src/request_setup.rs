@@ -4,9 +4,11 @@ use crate::ModelProvider;
 use crate::ProviderAuthScope;
 use crate::ResolvedProviderAuth;
 use crate::WorkspaceRoutingContext;
+use crate::auth::auth_provider_from_auth;
 use crate::auth::bearer_auth_for_provider;
 use crate::auth::resolve_provider_auth;
 use crate::auth::resolve_provider_auth_for_scope;
+use crate::github_copilot::uses_copilot_login;
 use codex_api::AgentIdentityTelemetry;
 use codex_api::Provider;
 use codex_api::ReqwestTransport;
@@ -19,6 +21,8 @@ use codex_login::AuthOwner;
 use codex_login::CodexAuth;
 use codex_login::default_client::ClientRedirectPolicy;
 use codex_login::default_client::create_client_for_route;
+use codex_login::github_copilot::hosted_oauth_token;
+use codex_login::github_copilot::is_hosted_copilot_api;
 use codex_model_provider_info::GatewayOAuthConfig;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::Result;
@@ -58,6 +62,20 @@ pub(crate) async fn resolve_request_auth(
                     let credential = bearer.token.as_deref().map(CodexAuth::from_api_key);
                     let mut resolved = ResolvedProviderAuth::new(Arc::new(bearer));
                     resolved.credential = credential;
+                    return Ok(resolved);
+                }
+
+                if uses_copilot_login(&info)
+                    && let Some(manager) = &manager
+                    && let Some(destination) = destination.as_deref()
+                    && let Some(token) =
+                        hosted_oauth_token(&manager.runtime_config().codex_home, destination)
+                            .map_err(std::io::Error::from)?
+                {
+                    let credential = CodexAuth::from_api_key(&token);
+                    let mut resolved =
+                        ResolvedProviderAuth::new(auth_provider_from_auth(&credential));
+                    resolved.credential = Some(credential);
                     return Ok(resolved);
                 }
 
@@ -177,6 +195,8 @@ pub async fn resolve_request(
                 .runtime
                 .as_ref()
                 .map(|selected| selected.runtime().id().to_owned());
+            let copilot_hosted_login = uses_copilot_login(provider.info())
+                && is_hosted_copilot_api(&api_provider.base_url);
             Ok(ResolvedProviderRequest {
                 auth,
                 auth_owner: resolved_auth
@@ -188,11 +208,12 @@ pub async fn resolve_request(
                     .map(|state| state.generation)
                     .or(state.map(|state| state.generation)),
                 api_provider,
-                redirect_policy: if provider
-                    .info()
-                    .gateway_oauth
-                    .as_ref()
-                    .is_some_and(GatewayOAuthConfig::uses_credential_export)
+                redirect_policy: if copilot_hosted_login
+                    || provider
+                        .info()
+                        .gateway_oauth
+                        .as_ref()
+                        .is_some_and(GatewayOAuthConfig::uses_credential_export)
                 {
                     ClientRedirectPolicy::Reject
                 } else {

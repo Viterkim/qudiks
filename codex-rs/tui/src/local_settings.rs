@@ -68,6 +68,7 @@ impl LocalSettings {
                 effects: config.tui_effects,
                 rendering: config.tui_rendering,
                 show_tooltips: config.show_tooltips,
+                copilot_usage_indicator: config.tui_copilot_usage_indicator,
                 show_server_version_notice: config.tui_show_server_version_notice,
                 auto_recap: config.tui_auto_recap,
                 disable_paste_burst: Some(config.disable_paste_burst),

@@ -7,11 +7,50 @@ use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
 use codex_http_client::RetryAfter;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::CodexErrorDetails;
+use pretty_assertions::assert_eq;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing_test::internal::MockWriter;
+
+#[tokio::test]
+async fn rate_limits_wait_past_retry_budget() {
+    let (session, turn_context) = make_session_and_context().await;
+    let step_context = StepContext::for_test(Arc::new(turn_context));
+    let mut client_session = session.services.model_client.new_session();
+    let mut retry_state = ResponsesStreamRetryState {
+        retries: 2,
+        ..Default::default()
+    };
+
+    tokio::time::pause();
+    for seconds in [1, 2, 4] {
+        let started_at = Instant::now();
+        handle_response_stream_error(
+            &mut retry_state,
+            /*max_retries*/ 2,
+            CodexErr::new(CodexErrorDetails::RateLimitExceeded(
+                "Try again in 1ms.".into(),
+            )),
+            &mut client_session,
+            &session,
+            &step_context,
+            ResponsesStreamRequest::Sampling,
+        )
+        .await
+        .expect("temporary rate limit should keep waiting");
+
+        let delay = Instant::now() - started_at;
+        assert!(
+            (Duration::from_secs(seconds)
+                ..=Duration::from_secs(seconds) + Duration::from_millis(1))
+                .contains(&delay)
+        );
+    }
+    assert_eq!(retry_state.retries, 2);
+}
 
 #[tokio::test]
 async fn sampling_retry_logs_stream_error_context() {

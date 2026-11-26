@@ -7,7 +7,7 @@ use crate::line_truncation::line_width;
 use crate::style::accent_color;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
-use crate::version::CODEX_CLI_VERSION;
+use crate::version::qudiks_display_version;
 use chrono::DateTime;
 use chrono::Local;
 use codex_app_server_protocol::AskForApproval;
@@ -31,6 +31,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::account::StatusAccountDisplay;
+use super::copilot_usage::StatusCopilotUsage;
 use super::format::FieldFormatter;
 use super::format::push_label;
 use super::helpers::compose_account_display;
@@ -143,6 +144,13 @@ impl StatusHistoryHandle {
     ) {
         self.card.thread_usage.set_estimate(estimate, plan);
     }
+
+    pub(crate) fn set_copilot_usage(
+        &self,
+        snapshot: Option<codex_login::github_copilot::CopilotQuotaSnapshot>,
+    ) {
+        self.card.copilot_usage.set_snapshot(snapshot);
+    }
 }
 
 #[derive(Debug)]
@@ -160,6 +168,7 @@ struct StatusHistoryCell {
     session_id: Option<String>,
     forked_from: Option<String>,
     token_usage: StatusTokenUsageData,
+    copilot_usage: StatusCopilotUsage,
     rate_limit_state: Arc<RwLock<StatusRateLimitState>>,
     thread_usage: StatusThreadUsage,
 }
@@ -337,13 +346,13 @@ impl StatusHistoryCell {
         if let Some(provider_id) = &model_provider {
             config_entries.insert(2, ("provider", provider_id.clone()));
         }
-        if config.model_provider.wire_api == WireApi::Responses {
+        if config.model_provider.wire_api != WireApi::ChatCompletions {
             let effort_value = reasoning_effort_override
                 .unwrap_or_else(|| config.model_reasoning_effort.clone())
                 .map(|effort| effort.to_string())
                 .unwrap_or_else(|| "none".to_string());
             config_entries.push(("reasoning effort", effort_value));
-            if remote_connection.is_none() {
+            if config.model_provider.wire_api == WireApi::Responses && remote_connection.is_none() {
                 config_entries.push((
                     "reasoning summaries",
                     config
@@ -371,8 +380,14 @@ impl StatusHistoryCell {
             &approval,
             workspace_root_suffix.as_deref(),
         );
-        let show_chatgpt_usage_link = requires_openai_auth;
         let mut account = compose_account_display(account_display);
+        if matches!(model_provider.as_deref(), Some("openai-api" | "claude-api")) {
+            account = Some(StatusAccountDisplay::ApiKey);
+        } else if model_provider.as_deref() == Some("endpoint") {
+            account = None;
+        }
+        let show_chatgpt_usage_link =
+            requires_openai_auth && matches!(account, Some(StatusAccountDisplay::ChatGpt { .. }));
         let workspace_matches_provider = if remote_connection.is_some() {
             // A connected server owns the provider definitions; only the built-in ID is certain.
             model_provider
@@ -439,6 +454,7 @@ impl StatusHistoryCell {
             session_id,
             forked_from,
             token_usage,
+            copilot_usage: StatusCopilotUsage::default(),
             agents_summary,
             rate_limit_state: Arc::new(RwLock::new(rate_limit_state)),
             thread_usage,
@@ -795,9 +811,7 @@ impl StatusHistoryCell {
                     (None, Some(plan)) => plan.clone(),
                     (None, None) => "ChatGPT".to_string(),
                 },
-                StatusAccountDisplay::ApiKey => {
-                    "API key configured (run codex login to use ChatGPT)".to_string()
-                }
+                StatusAccountDisplay::ApiKey => "OpenAI API key configured".to_string(),
             });
 
         let workspace = match &rate_limit_state.account {
@@ -840,6 +854,9 @@ impl StatusHistoryCell {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
         push_label(&mut labels, &mut seen, "Token usage");
+        if self.model_provider.as_deref() == Some("github-copilot") {
+            StatusCopilotUsage::push_labels(&mut labels, &mut seen);
+        }
         if self.token_usage.context_window.is_some() {
             push_label(&mut labels, &mut seen, "Context window");
         }
@@ -908,6 +925,10 @@ impl StatusHistoryCell {
         }
 
         lines.push(Line::from(Vec::<Span<'static>>::new()));
+        if self.model_provider.as_deref() == Some("github-copilot") {
+            lines.extend(self.copilot_usage.lines(&formatter));
+            lines.push(Line::from(Vec::<Span<'static>>::new()));
+        }
         // Hide token usage only for ChatGPT subscribers
         if !matches!(
             rate_limit_state.account,
@@ -920,11 +941,29 @@ impl StatusHistoryCell {
             lines.push(formatter.line("Context window", spans));
         }
 
-        lines.extend(self.rate_limit_lines(&rate_limit_state, available_width, &formatter));
+        if !matches!(
+            self.model_provider.as_deref(),
+            Some("github-copilot" | "openai-api" | "claude-api" | "endpoint")
+        ) || !matches!(
+            &rate_limit_state.rate_limits,
+            StatusRateLimitData::Missing | StatusRateLimitData::Unavailable
+        ) {
+            lines.extend(self.rate_limit_lines(&rate_limit_state, available_width, &formatter));
+        }
         let thread_usage_lines = self.thread_usage.lines(&formatter, value_width);
         if !thread_usage_lines.is_empty() {
             lines.push(Line::from(Vec::<Span<'static>>::new()));
             lines.extend(thread_usage_lines);
+        }
+        if self.model_provider.as_deref() == Some("openai-api") {
+            lines.extend(word_wrap_lines(
+                [
+                    Line::default(),
+                    "API usage: https://platform.openai.com/usage".into(),
+                    "Credits and billing: https://platform.openai.com/settings/organization/billing/overview".into(),
+                ],
+                RtOptions::new(available_width),
+            ));
         }
 
         // Leave room for the two-column title mark even in a tiny terminal.
@@ -934,7 +973,7 @@ impl StatusHistoryCell {
             ""
         };
         let mut title = vec![indent.into()];
-        title.extend(crate::history_cell::codex_title(CODEX_CLI_VERSION));
+        title.extend(crate::history_cell::codex_title(qudiks_display_version()));
         let mut rendered = word_wrap_lines(
             [Line::from(title)],
             RtOptions::new(available_width).subsequent_indent(indent.into()),
